@@ -280,6 +280,7 @@ function assemble(name, props, variants, defaults, isSub) {
 			styles: {},
 			classes: new Set(),
 			instances: new Set(),
+			props: {}, // clase → props de la instancia (o ícono) en esta variante
 			reg,
 			bound: {},
 		};
@@ -296,6 +297,7 @@ function assemble(name, props, variants, defaults, isSub) {
 			styles: state.styles,
 			classes: state.classes,
 			instances: state.instances,
+			instProps: state.props,
 			bound: state.bound,
 		};
 	});
@@ -326,6 +328,16 @@ function assemble(name, props, variants, defaults, isSub) {
 	res.styles = base;
 	if (variantStyles.length) res.variantStyles = variantStyles;
 
+	// Props de instancias anidadas que cambian por variante (structure solo trae las del default).
+	// Mismo algoritmo que los estilos: agrupa por una sola prop cuando se puede.
+	const vp = diffStyles(
+		built.map((b) => ({ props: b.props, classes: b.classes, styles: b.instProps })),
+		d,
+		null,
+	).variantStyles;
+	if (vp.length)
+		res.variantProps = vp.map((r) => ({ when: r.when, props: r.styles }));
+
 	const sig = (s) =>
 		JSON.stringify(s, (k, v) =>
 			k === "text" || k === "props" || k === "name" || k === "segments"
@@ -342,7 +354,8 @@ function assemble(name, props, variants, defaults, isSub) {
 
 // Separa los estilos comunes (base) de los que cambian por variante.
 // Si un valor depende de una sola prop, se agrupa por esa prop; si no, por la combinación completa.
-function diffStyles(built, d) {
+// missing: valor que se emite cuando una variante no define algo que la base sí.
+function diffStyles(built, d, missing = "unset") {
 	const classes = new Set();
 	built.forEach((b) => b.classes.forEach((c) => classes.add(c)));
 	const propNames = [...new Set(built.flatMap((b) => Object.keys(b.props)))];
@@ -353,7 +366,7 @@ function diffStyles(built, d) {
 		if (!rules.has(key)) rules.set(key, { when, styles: {} });
 		const r = rules.get(key);
 		(r.styles[cls] = r.styles[cls] || {})[prop] =
-			val === undefined ? "unset" : val;
+			val === undefined ? missing : val;
 	};
 
 	for (const cls of classes) {
@@ -495,7 +508,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 		const p = {};
 		for (const [k, v] of Object.entries(node.componentProperties || {}))
 			p[propName(k)] = displayValue(v);
-		if (Object.keys(p).length) el.props = p;
+		if (Object.keys(p).length) el.props = state.props[el.className] = p;
 		registerSub(cname, node);
 		put();
 		return el;
@@ -511,7 +524,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 			const p = {};
 			for (const [k, v] of Object.entries(node.componentProperties || {}))
 				p[propName(k)] = displayValue(v);
-			if (Object.keys(p).length) el.props = p;
+			if (Object.keys(p).length) el.props = state.props[el.className] = p;
 		}
 		// Solo los monocromos se pueden recolorear con currentColor
 		const pal = vectorPalette(node);
@@ -1332,6 +1345,14 @@ function notes(subs) {
 	)
 		n.push(
 			'variantStyles: estilos que cambian por variante; se aplican con data-atributos en root, p. ej. <div className={styles.root} data-size="Large">.',
+		);
+	if (
+		[ctx.rootComponent, ...Object.values(subs)].some(
+			(s) => s && s.variantProps,
+		)
+	)
+		n.push(
+			'variantProps: props de instancias anidadas que cambian por variante, por className (structure trae las de la variante por defecto); p. ej. <Badge tone={state === "Hover" ? "Success" : "Info"} />. null = la prop no existe en esa variante.',
 		);
 	if (ctx.icons.size)
 		n.push(

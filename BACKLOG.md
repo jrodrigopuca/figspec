@@ -45,9 +45,17 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   _Límite:_ entre hermanos homónimos del mismo nivel se empareja por posición; si una variante
   reordena o inserta un homónimo *antes*, la ambigüedad persiste (no hay forma de saberlo desde la API).
 
-- [ ] **5. Se pierden las props de instancias anidadas que cambian por variante.**
+- [x] **5. Se pierden las props de instancias anidadas que cambian por variante.**
   `sig()` ignora `props`, así que `<Icon type="arrow">` vs `<Icon type="close">` entre variantes no
   queda registrado.
+  _Arreglo:_ nuevo campo `variantProps` (`[{ when, props: { clase: { prop: valor } } }]`), calculado
+  con el mismo algoritmo de `diffStyles` (agrupa por una sola prop cuando se puede). `null` = la prop
+  no existe en esa variante. Nota explicativa en `meta.notes`.
+
+- [ ] **10. Se pierde el texto que cambia por variante.**
+  `sig()` también ignora `text`/`segments`: si la variante `Loading` dice "Cargando…" y `Default`
+  dice "Enviar", solo queda el del default (salvo que el texto esté enlazado a una prop).
+  _Propuesta:_ mismo mecanismo que `variantProps` (p. ej. `variantText`).
 
 - [x] **6. Desplazamientos mal calculados con algunos bordes.**
   - `strokeAlign: CENTER`: `inset = w/2`, pero el `border` CSS ocupa `w`.
