@@ -178,7 +178,9 @@ async function main() {
 			);
 		} else {
 			data = await api(
-				`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`,
+				// geometry=paths: sin esto no vienen size ni relativeTransform (rotación).
+				// Es la misma petición, solo más pesada (incluye los trazados de los vectores).
+				`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}&geometry=paths`,
 				token,
 			);
 			// --refresh borra la caché recién ahora: si la petición fallara (p. ej. un 429 de
@@ -755,9 +757,39 @@ function rootSize(node, isSub) {
 	return css;
 }
 
+// Caja sin rotar, centrada donde Figma dibuja el elemento (CSS rota alrededor del centro).
+// absoluteBoundingBox es la caja YA rotada; el tamaño real (size) solo viene con geometry=paths.
+function layoutBox(node) {
+	const bb = node.absoluteBoundingBox;
+	if (!bb || !rotationOf(node) || !node.size) return bb;
+	const { x: w, y: h } = node.size;
+	return {
+		x: bb.x + bb.width / 2 - w / 2,
+		y: bb.y + bb.height / 2 - h / 2,
+		width: w,
+		height: h,
+	};
+}
+
+// Grados para CSS rotate() (horario); 0 si no está rotado o no hay geometría para saberlo.
+function rotationOf(node) {
+	const t = node.relativeTransform;
+	if (!t || !t[0] || !t[1]) {
+		// `rotation` sí viene siempre, pero la especificación no aclara su unidad
+		if (Math.abs(node.rotation || 0) > 1e-3)
+			ctx.notes.add(
+				"Hay elementos rotados, pero la respuesta no trae su geometría (geometry=paths): se usó la caja rotada y no se aplicó la rotación. Vuelve a pedirla con --refresh.",
+			);
+		return 0;
+	}
+	// Figma: [[cos, sin], [-sin, cos]] con ángulo antihorario → CSS (horario) = -ángulo
+	const ang = (Math.atan2(t[1][0], t[0][0]) * 180) / Math.PI;
+	return Math.abs(ang) > 0.5 ? ang : 0;
+}
+
 function placement(node, parent, pctx) {
 	const css = {};
-	const bb = node.absoluteBoundingBox;
+	const bb = layoutBox(node);
 	if (!bb || !parent) return css;
 	const bv = node.boundVariables || {};
 	const W = num(bb.width, bv.width),
@@ -846,6 +878,10 @@ function placement(node, parent, pctx) {
 	}
 
 	// Hijo de flexbox (auto layout)
+	if (rotationOf(node))
+		ctx.notes.add(
+			"Hay elementos rotados dentro de auto layout: Figma reserva el espacio de la caja rotada, pero en CSS la rotación no cambia el espacio que ocupa el elemento (puede requerir un contenedor con el tamaño rotado).",
+		);
 	const row = parentLayout === "HORIZONTAL";
 	const mainS = (row ? H : V) || (node.layoutGrow === 1 ? "FILL" : "FIXED");
 	const crossS =
@@ -1182,11 +1218,8 @@ function miscCss(node, isRoot) {
 		LUMINOSITY: "luminosity",
 	};
 	if (blends[node.blendMode]) css["mix-blend-mode"] = blends[node.blendMode];
-	const t = node.relativeTransform;
-	if (!isRoot && t && t[0] && t[1]) {
-		const ang = (Math.atan2(t[1][0], t[0][0]) * 180) / Math.PI;
-		if (Math.abs(ang) > 0.5) css.transform = `rotate(${rd(ang)}deg)`;
-	}
+	const ang = isRoot ? 0 : rotationOf(node);
+	if (ang) css.transform = `rotate(${rd(ang)}deg)`;
 	if (node.clipsContent && node.children && node.children.length)
 		css.overflow = "hidden";
 	return css;

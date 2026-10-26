@@ -94,8 +94,18 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   CENTER sólido = `border` w/2 + `outline` w/2 (mitad adentro, mitad afuera, como Figma);
   CENTER punteado y lados distintos con CENTER/OUTSIDE se aproximan como interiores, con nota.
 
-- [ ] **7. Elementos rotados usan `absoluteBoundingBox` como tamaño.**
+- [x] **7. Elementos rotados usan `absoluteBoundingBox` como tamaño.**
   La caja ya rotada es mayor que el elemento; usar `node.size` (dimensiones reales).
+  _Hallazgo:_ según la especificación oficial (figma/rest-api-spec), `size` y `relativeTransform` solo
+  vienen con `geometry=paths`, que no se pedía: **la rotación nunca se aplicaba**. `rotation` sí viene
+  siempre, pero sin unidad documentada.
+  _Arreglo:_ la petición de nodes agrega `geometry=paths` (misma petición, respuesta más pesada).
+  Rotados: tamaño de `size`, caja sin rotar centrada en la de Figma y `rotate()`; verificado
+  numéricamente (la caja que dibuja el navegador coincide con la de Figma a 90° y 30°).
+  Sin geometría (caché vieja, `--from`): comportamiento anterior + nota que sugiere `--refresh`.
+  _Límites:_ dentro de auto layout Figma reserva la caja rotada y CSS no (nota); hijos de un padre
+  rotado y transformaciones espejadas (flip) no se tratan. Los íconos no cambian: el SVG exportado
+  ya viene rotado.
 
 - [ ] **8. Colores de texto no se tokenizan con estilos de color.**
   `fontCss` ignora `styles.fill` en nodos TEXT; solo se tokeniza si hay variable enlazada.
