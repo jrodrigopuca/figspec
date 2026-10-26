@@ -8,6 +8,7 @@
   "files": [
     "extractor.js"
   ],
+  "license": "MIT",
   "engines": {
     "node": ">=18"
   },

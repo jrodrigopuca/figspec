@@ -50,3 +50,7 @@ Prioridad: parámetro > variable de entorno > `.env` > valor por defecto.
 ## Estado
 
 En desarrollo. Mejoras pendientes y limitaciones conocidas en [BACKLOG.md](BACKLOG.md).
+
+## Licencia
+
+[MIT](LICENSE)
