@@ -52,10 +52,17 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   con el mismo algoritmo de `diffStyles` (agrupa por una sola prop cuando se puede). `null` = la prop
   no existe en esa variante. Nota explicativa en `meta.notes`.
 
-- [ ] **10. Se pierde el texto que cambia por variante.**
+- [x] **10. Se pierde el texto que cambia por variante.**
   `sig()` también ignora `text`/`segments`: si la variante `Loading` dice "Cargando…" y `Default`
   dice "Enviar", solo queda el del default (salvo que el texto esté enlazado a una prop).
-  _Propuesta:_ mismo mecanismo que `variantProps` (p. ej. `variantText`).
+  _Arreglo:_ nuevo campo `variantText` (`[{ when, text: { clase: "…" } }]`), mismo mecanismo que
+  `variantProps`. Los textos enlazados a una prop se excluyen (su contenido sale de la prop).
+  _Límite:_ con segmentos de estilo distinto solo se registra el contenido, no el estilo por segmento.
+
+- [ ] **11. Sin reintentos ante el límite de peticiones (429).**
+  Si Figma responde 429 durante la descarga de íconos o imágenes, se muestra un aviso y la salida
+  queda sin assets (y sin unificación de íconos). Pasó en una prueba real con varias ejecuciones seguidas.
+  _Propuesta:_ reintentar respetando la cabecera `Retry-After`, con un máximo de intentos.
 
 - [x] **6. Desplazamientos mal calculados con algunos bordes.**
   - `strokeAlign: CENTER`: `inset = w/2`, pero el `border` CSS ocupa `w`.

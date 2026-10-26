@@ -281,6 +281,7 @@ function assemble(name, props, variants, defaults, isSub) {
 			classes: new Set(),
 			instances: new Set(),
 			props: {}, // clase → props de la instancia (o ícono) en esta variante
+			texts: {}, // clase → { text } en esta variante (sin los enlazados a una prop)
 			reg,
 			bound: {},
 		};
@@ -298,6 +299,7 @@ function assemble(name, props, variants, defaults, isSub) {
 			classes: state.classes,
 			instances: state.instances,
 			instProps: state.props,
+			texts: state.texts,
 			bound: state.bound,
 		};
 	});
@@ -328,15 +330,25 @@ function assemble(name, props, variants, defaults, isSub) {
 	res.styles = base;
 	if (variantStyles.length) res.variantStyles = variantStyles;
 
-	// Props de instancias anidadas que cambian por variante (structure solo trae las del default).
-	// Mismo algoritmo que los estilos: agrupa por una sola prop cuando se puede.
-	const vp = diffStyles(
-		built.map((b) => ({ props: b.props, classes: b.classes, styles: b.instProps })),
-		d,
-		null,
-	).variantStyles;
+	// Contenido que cambia por variante (structure solo trae el del default): props de instancias
+	// anidadas y texto. Mismo algoritmo que los estilos: agrupa por una sola prop cuando se puede.
+	const contentDiff = (key) =>
+		diffStyles(
+			built.map((b) => ({ props: b.props, classes: b.classes, styles: b[key] })),
+			d,
+			null,
+		).variantStyles;
+	const vp = contentDiff("instProps");
 	if (vp.length)
 		res.variantProps = vp.map((r) => ({ when: r.when, props: r.styles }));
+	const vt = contentDiff("texts");
+	if (vt.length)
+		res.variantText = vt.map((r) => ({
+			when: r.when,
+			text: Object.fromEntries(
+				Object.entries(r.styles).map(([cls, v]) => [cls, v.text]),
+			),
+		}));
 
 	const sig = (s) =>
 		JSON.stringify(s, (k, v) =>
@@ -540,6 +552,11 @@ function walk(node, parent, pctx, state, root, path = "") {
 	if (node.type === "TEXT") {
 		el.tag = "span";
 		Object.assign(css, textCss(node, el));
+		// Si está enlazado a una prop, el contenido sale de la prop y no de la variante
+		if (!bind.text)
+			state.texts[el.className] = {
+				text: el.segments ? el.segments.map((s) => s.text).join("") : el.text,
+			};
 	} else {
 		const img = imageFill(node);
 		if (img) {
@@ -1353,6 +1370,14 @@ function notes(subs) {
 	)
 		n.push(
 			'variantProps: props de instancias anidadas que cambian por variante, por className (structure trae las de la variante por defecto); p. ej. <Badge tone={state === "Hover" ? "Success" : "Info"} />. null = la prop no existe en esa variante.',
+		);
+	if (
+		[ctx.rootComponent, ...Object.values(subs)].some(
+			(s) => s && s.variantText,
+		)
+	)
+		n.push(
+			'variantText: texto que cambia por variante, por className (structure trae el de la variante por defecto); p. ej. {state === "Loading" ? "Cargando…" : "Enviar"}. Si el texto tiene segmentos con estilos, aquí va solo el contenido.',
 		);
 	if (ctx.icons.size)
 		n.push(
