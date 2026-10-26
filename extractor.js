@@ -1,43 +1,35 @@
 #!/usr/bin/env node
 /**
- * figma-extract.js  (v2)
- * Convierte un componente de Figma en:
+ * figspec — extractor
+ * Convierte un componente exportado desde Figma con el plugin (plugin/) en:
  *   - component.json   → estructura (componente + subcomponentes) y estilos CSS por clase
  *   - *.module.css     → un CSS Module por componente, listo para React
  *   - tokens.css       → variables CSS (:root) de los tokens usados
+ *   - assets/          → íconos (SVG) e imágenes, y preview.png
  *
- * Requisitos: Node 18+ y un personal access token de Figma con scope "File content: read".
+ * Requisitos: Node 18+. No usa la red: todo viene en el paquete del plugin.
  *
  * Uso:
- *   1. Crea un archivo .env (en la carpeta donde ejecutas o junto al script); ver .env.example.
- *   2. node extractor.js ["<link al componente>"] [opciones]
+ *   1. En Figma, exporta el componente con el plugin "figspec export" → figspec-<nombre>.json
+ *   2. node extractor.js figspec-<nombre>.json [opciones]
  *
  * Opciones (parámetro > variable de entorno > .env > valor por defecto):
- *   "<link>"          Link al componente.                                     FIGMA_LINK
- *   --assets          Descarga íconos (SVG) e imágenes usadas en assets/.     FIGMA_ASSETS=true
- *   --png             Descarga una vista previa preview.png (referencia LLM). FIGMA_PNG=true
- *   --shallow         No describe los subcomponentes, solo cómo se usan.      FIGMA_SHALLOW=true
- *   --no-css          Solo genera component.json.                             FIGMA_CSS=false
- *   --out-dir <dir>   Carpeta de salida (por defecto: figma-<componente>/).   FIGMA_OUT_DIR
- *   --no-assets, --no-png, --no-shallow, --css   Anulan lo definido en el .env.
- *   --offline         Modo de pruebas: solo usa la caché, nunca la red ni el token. FIGMA_OFFLINE=true
- *   --online          Anula FIGMA_OFFLINE del .env.
- *   --refresh         Vuelve a pedir todo a Figma: si la petición funciona, borra la caché del archivo
- *                     y los archivos que el extractor generó antes en la salida (.figspec-manifest.json).
- *   --from <archivo>  Procesa una respuesta guardada de /v1/files/:key/nodes (sin red; solo parámetro).
+ *   <archivo>         Paquete del plugin (o respuesta de /v1/files/:key/nodes).   FIGMA_FROM
+ *   --out-dir <dir>   Carpeta de salida (por defecto: figma-<componente>/).       FIGMA_OUT_DIR
+ *   --no-assets       No escribe íconos ni imágenes.                              FIGMA_ASSETS=false
+ *   --no-png          No escribe preview.png.                                     FIGMA_PNG=false
+ *   --shallow         No describe los subcomponentes, solo cómo se usan.          FIGMA_SHALLOW=true
+ *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
+ *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
  *
- * Caché: lo que consume cuota de la API (nodes, variables, íconos, imágenes, vista previa) se guarda
- * en FIGMA_CACHE_DIR (por defecto .figspec-cache/) y se reutiliza en las siguientes ejecuciones.
- *
- * El token se lee siempre de FIGMA_TOKEN (nunca por parámetro).
- * FIGMA_MAX_WAIT (segundos, 60 por defecto): espera máxima aceptada al reintentar tras un 429; 0 = sin reintentos.
+ * Cada ejecución reemplaza la salida anterior: borra solo los archivos que generó antes
+ * (registrados en .figspec-manifest.json); el resto de la carpeta no se toca.
  */
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
 
-const API = "https://api.figma.com/v1";
 const VECTOR_TYPES = new Set([
 	"VECTOR",
 	"BOOLEAN_OPERATION",
@@ -50,8 +42,8 @@ const NO_INSET = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 const allSides = (w) => ({ top: w, right: w, bottom: w, left: w });
 
 // ---------------------------------------------------------------- .env
-// Lee FIGMA_TOKEN (y otras variables) desde un .env en la carpeta actual o en la del script.
-// Las variables ya definidas en el entorno tienen prioridad.
+// Lee la configuración (FIGMA_FROM, FIGMA_OUT_DIR…) desde un .env en la carpeta actual o en la
+// del script. Las variables ya definidas en el entorno tienen prioridad.
 loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, ".env")]);
 
 function loadEnv(files) {
@@ -78,15 +70,12 @@ function loadEnv(files) {
 // ---------------------------------------------------------------- CLI
 // Valores por defecto desde el entorno (.env incluido); los parámetros los anulan.
 const opts = {
-	url: process.env.FIGMA_LINK || null,
-	from: null,
+	from: process.env.FIGMA_FROM || null,
 	outDir: process.env.FIGMA_OUT_DIR || null,
 	css: envFlag("FIGMA_CSS", true),
-	assets: envFlag("FIGMA_ASSETS", false),
-	png: envFlag("FIGMA_PNG", false),
+	assets: envFlag("FIGMA_ASSETS", true),
+	png: envFlag("FIGMA_PNG", true),
 	shallow: envFlag("FIGMA_SHALLOW", false),
-	offline: envFlag("FIGMA_OFFLINE", false),
-	refresh: false,
 };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -99,19 +88,14 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-shallow") opts.shallow = false;
 	else if (a === "--css") opts.css = true;
 	else if (a === "--no-css") opts.css = false;
-	else if (a === "--offline") opts.offline = true;
-	else if (a === "--online") opts.offline = false;
-	else if (a === "--refresh") opts.refresh = true;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
-	} else if (!a.startsWith("--")) opts.url = a;
+	} else if (!a.startsWith("--")) opts.from = a;
 	else fail(`Opción desconocida: ${a}`);
 }
-if (opts.offline && opts.refresh)
-	fail("--refresh pide datos nuevos a Figma y --offline lo impide: usa solo uno.");
 
 function envFlag(name, def) {
 	const v = (process.env[name] || "").trim();
@@ -123,6 +107,7 @@ function envFlag(name, def) {
 
 const ctx = {
 	fileKey: null,
+	bundle: null, // paquete del plugin; null si la entrada es una respuesta de /nodes
 	styles: {},
 	components: {},
 	componentSets: {},
@@ -138,82 +123,41 @@ const ctx = {
 	imageRefs: new Set(),
 	notes: new Set(),
 	generated: new Set(), // archivos escritos en la carpeta de salida (rutas relativas)
-	requests: 0, // peticiones a la API de Figma (las de la caché no cuentan)
-	cacheHits: 0,
 };
 
 // ---------------------------------------------------------------- main
-async function main() {
-	let data, nodeId, token;
-
-	if (opts.from) {
+function main() {
+	if (!opts.from) {
+		printHelp();
+		fail(
+			"Falta el paquete: exporta el componente con el plugin (plugin/) y pásalo como parámetro (node extractor.js figspec-<nombre>.json) o en FIGMA_FROM.",
+		);
+	}
+	let data;
+	try {
 		data = JSON.parse(fs.readFileSync(opts.from, "utf8"));
-		nodeId = Object.keys(data.nodes || {})[0];
-		if (!nodeId) fail("El JSON no tiene el formato de /v1/files/:key/nodes.");
-		ctx.fileKey = "(local)";
-	} else {
-		if (!opts.url) {
-			printHelp();
-			fail(
-				'Falta el link: define FIGMA_LINK en el .env o pásalo como parámetro (node extractor.js "<link>").',
-			);
-		}
-		if (typeof fetch !== "function") fail("Necesitas Node 18 o superior.");
-		token = process.env.FIGMA_TOKEN; // se exige recién al hacer una petición (ver api)
-		let fileKey;
-		({ fileKey, nodeId } = parseFigmaUrl(opts.url));
-		ctx.fileKey = fileKey;
-
-		const nodesRel = `${fileKey}/${safeId(nodeId)}.nodes.json`;
-		const saved = readCache(nodesRel);
-		if (saved !== undefined) {
-			data = JSON.parse(saved);
-			const when = fs.statSync(cachePath(nodesRel)).mtime;
-			console.error(
-				`↺ Respuesta guardada del ${when.toLocaleString()} (${cachePath(nodesRel)}).${opts.offline ? "" : " Usa --refresh para pedirla de nuevo."}`,
-			);
-		} else if (opts.offline) {
-			fail(
-				`Modo offline: no hay respuesta guardada para el nodo ${nodeId} (${cachePath(nodesRel)}). Ejecuta una vez sin --offline para guardarla.`,
-			);
-		} else {
-			data = await api(
-				// geometry=paths: sin esto no vienen size ni relativeTransform (rotación).
-				// Es la misma petición, solo más pesada (incluye los trazados de los vectores).
-				`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}&geometry=paths`,
-				token,
-			);
-			// --refresh borra la caché recién ahora: si la petición fallara (p. ej. un 429 de
-			// varios días) se conserva la anterior y se puede seguir trabajando con --offline.
-			if (opts.refresh) {
-				fs.rmSync(cachePath(fileKey), { recursive: true, force: true });
-				console.error(`↻ --refresh: caché borrada (${cachePath(fileKey)}).`);
-			}
-			writeCache(nodesRel, JSON.stringify(data));
-		}
-
-		// Solo funciona en Enterprise (scope file_variables:read). El resultado, o el error, se
-		// guarda para no gastar una petición en cada ejecución; un 429 no se guarda.
-		const varsRel = `${fileKey}/variables.json`;
-		let v = readCache(varsRel);
-		v = v === undefined ? undefined : JSON.parse(v);
-		if (v === undefined && !opts.offline) {
-			try {
-				v = await api(`/files/${fileKey}/variables/local`, token);
-			} catch (e) {
-				v = e.status === 429 ? null : { error: e.message };
-			}
-			if (v) writeCache(varsRel, JSON.stringify(v));
-		}
-		for (const variable of Object.values((v && v.meta && v.meta.variables) || {}))
-			ctx.variables[variable.id] = variable;
+	} catch (e) {
+		fail(`No se pudo leer ${opts.from}: ${e.message}`);
+	}
+	let nodeId = Object.keys(data.nodes || {})[0];
+	if (!nodeId)
+		fail(
+			`${opts.from} no es un paquete del plugin ni una respuesta de /v1/files/:key/nodes.`,
+		);
+	ctx.fileKey = "(local)";
+	// Paquete del plugin: trae además íconos, imágenes, vista previa y nombres de variables
+	if (data.figspec) {
+		ctx.bundle = data;
+		nodeId = data.nodeId || nodeId;
+		ctx.fileKey = data.fileKey || "(plugin)";
+		for (const v of Object.values(data.variables || {})) ctx.variables[v.id] = v;
+		console.error(
+			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
+		);
 	}
 
-	const entry = data.nodes && data.nodes[nodeId];
-	if (!entry || !entry.document)
-		fail(
-			`No se encontró el nodo ${nodeId}. Copia el link con clic derecho → Copy link to selection.`,
-		);
+	const entry = data.nodes[nodeId];
+	if (!entry || !entry.document) fail(`No se encontró el nodo ${nodeId} en ${opts.from}.`);
 	ctx.styles = entry.styles || {};
 	ctx.components = entry.components || {};
 	ctx.componentSets = entry.componentSets || {};
@@ -244,11 +188,11 @@ async function main() {
 	const outDir =
 		opts.outDir || `figma-${kebab(component.name) || "componente"}`;
 	fs.mkdirSync(outDir, { recursive: true });
-	if (opts.refresh) cleanOutput(outDir);
+	cleanOutput(outDir);
 
+	// Los assets solo vienen en el paquete del plugin (una respuesta de /nodes no los trae)
 	let rename = { images: {}, icons: {} };
-	const remote = !opts.from; // con --from no hay archivo de Figma del que bajar assets
-	if (opts.assets && remote) rename = await downloadAssets(token, outDir);
+	if (opts.assets && ctx.bundle) rename = writeAssets(outDir);
 	if (result.icons) result.icons = iconList(); // tras deduplicar por contenido
 	const fix = (s) =>
 		fixIconPaths(fixImagePaths(s, rename.images), rename.icons);
@@ -267,26 +211,20 @@ async function main() {
 			write(`${sub.name}.module.css`, moduleCss(sub));
 		if (ctx.tokens.size) write("tokens.css", tokensCss());
 	}
-	if (opts.png && remote) {
-		if (await downloadPng(token, nodeId, outDir)) {
-			ctx.generated.add("preview.png");
-			files.push("preview.png");
-		}
+	if (opts.png && ctx.bundle && writePreview(nodeId, outDir)) {
+		ctx.generated.add("preview.png");
+		files.push("preview.png");
 	}
 	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
 	for (const f of files) console.error(`   ${f}`);
 	console.error(`  component.json ≈ ${Math.ceil(json.length / 4)} tokens`);
-	if (remote)
-		console.error(
-			`  Figma API: ${ctx.requests} ${ctx.requests === 1 ? "petición" : "peticiones"} · caché: ${ctx.cacheHits} ${ctx.cacheHits === 1 ? "archivo reutilizado" : "archivos reutilizados"}`,
-		);
 }
 
 // ---------------------------------------------------------------- manifiesto de salida
-// Lista de archivos que generó el extractor en la carpeta de salida. --refresh borra solo esos:
-// la carpeta puede ser parte de un proyecto (p. ej. src/components) y no se toca nada más.
+// Lista de archivos que generó el extractor en la carpeta de salida. Cada ejecución borra solo
+// esos antes de escribir: la carpeta puede ser parte de un proyecto (p. ej. src/components).
 const MANIFEST = ".figspec-manifest.json";
 
 function readManifest(outDir) {
@@ -297,13 +235,11 @@ function readManifest(outDir) {
 	}
 }
 
-// Une lo generado ahora con lo anterior: un archivo que dejó de generarse sigue registrado
-// hasta el próximo --refresh, que es quien lo borra.
 function writeManifest(outDir) {
-	const files = [...new Set([...readManifest(outDir), ...ctx.generated])].sort();
 	fs.writeFileSync(
 		path.join(outDir, MANIFEST),
-		JSON.stringify({ generatedBy: "figspec", files }, null, 2) + "\n",
+		JSON.stringify({ generatedBy: "figspec", files: [...ctx.generated].sort() }, null, 2) +
+			"\n",
 	);
 }
 
@@ -326,60 +262,35 @@ function cleanOutput(outDir) {
 		}
 	fs.rmSync(path.join(root, MANIFEST), { force: true });
 	if (removed)
-		console.error(`↻ --refresh: ${removed} archivo(s) generados antes, borrados de ${outDir}/.`);
+		console.error(`↻ Salida anterior reemplazada (${removed} archivo(s) en ${outDir}/).`);
 }
 
-// ---------------------------------------------------------------- caché
-// Todo lo que consume cuota de la API se guarda en FIGMA_CACHE_DIR (por defecto .figspec-cache/):
-// respuesta de nodes, variables, SVG de íconos, imágenes y vista previa.
-// --refresh lo ignora y lo vuelve a pedir; --offline solo usa la caché y nunca la red.
-function cachePath(rel) {
-	return path.join(process.env.FIGMA_CACHE_DIR || ".figspec-cache", rel);
-}
-
-// undefined si no está (o si se pidió --refresh). encoding null → Buffer.
-function readCache(rel, encoding = "utf8") {
-	if (opts.refresh) return undefined;
-	try {
-		const content = fs.readFileSync(cachePath(rel), encoding);
-		ctx.cacheHits++;
-		return content;
-	} catch {
-		return undefined;
-	}
-}
-
-function writeCache(rel, content) {
-	const file = cachePath(rel);
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, content);
-}
-
-// ids → Buffer: lee de la caché lo que haya y pide a Figma (fetchMissing) solo lo que falte.
-async function cachedAssets(kind, ext, ids, fetchMissing) {
-	const rel = (id) => `${ctx.fileKey}/${kind}/${safeId(id)}${ext}`;
+// ---------------------------------------------------------------- assets del paquete
+// Vienen dentro del JSON del plugin: SVG como texto, binarios (imágenes, PNG) en base64.
+function bundleAssets(kind, ids) {
+	const b = ctx.bundle;
 	const out = new Map();
-	const missing = [];
 	for (const id of ids) {
-		const buf = readCache(rel(id), null);
-		if (buf !== undefined) out.set(id, buf);
-		else missing.push(id);
+		const v =
+			kind === "icons"
+				? (b.icons || {})[id]
+				: kind === "images"
+					? (b.images || {})[id]
+					: id === b.nodeId
+						? b.preview
+						: null;
+		if (v) out.set(id, Buffer.from(v, kind === "icons" ? "utf8" : "base64"));
 	}
-	if (missing.length && opts.offline)
+	const missing = ids.length - out.size;
+	const what = { icons: "ícono(s)", images: "imagen(es)", preview: "vista previa" }[kind];
+	const option = kind === "preview" ? "Vista previa (PNG)" : "Íconos (SVG) e imágenes";
+	if (missing)
 		console.error(
-			`… Modo offline: faltan ${missing.length} archivo(s) de ${kind} en la caché; se omiten.`,
+			`… El paquete no incluye ${kind === "preview" ? "la" : missing} ${what}; expórtalo desde el plugin con "${option}" activado.`,
 		);
-	else if (missing.length)
-		for (const [id, buf] of await fetchMissing(missing)) {
-			writeCache(rel(id), buf);
-			out.set(id, buf);
-		}
 	return out;
 }
 
-function safeId(id) {
-	return String(id).replace(/[^A-Za-z0-9_-]/g, "_");
-}
 
 // ---------------------------------------------------------------- componentes y variantes
 function buildRoot(root) {
@@ -681,6 +592,22 @@ function walk(node, parent, pctx, state, root, path = "") {
 		el.tag = "svg";
 		el.icon = icon.name;
 		el.src = icon.file;
+		// Un frame en HUG se ajusta a su contenido, pero aquí el contenido pasa a ser el SVG:
+		// su tamaño es el de la caja exportada y hay que declararlo.
+		const bb = node.absoluteBoundingBox;
+		if (bb) {
+			let hug = false;
+			if (node.layoutSizingHorizontal === "HUG" && !css.width) {
+				css.width = px(bb.width);
+				hug = true;
+			}
+			if (node.layoutSizingVertical === "HUG" && !css.height) {
+				css.height = px(bb.height);
+				hug = true;
+			}
+			if (hug && parent && parent.layoutMode && parent.layoutMode !== "NONE")
+				css["flex-shrink"] = "0";
+		}
 		if (node.type === "INSTANCE") {
 			const p = {};
 			for (const [k, v] of Object.entries(node.componentProperties || {}))
@@ -758,7 +685,7 @@ function rootSize(node, isSub) {
 }
 
 // Caja sin rotar, centrada donde Figma dibuja el elemento (CSS rota alrededor del centro).
-// absoluteBoundingBox es la caja YA rotada; el tamaño real (size) solo viene con geometry=paths.
+// absoluteBoundingBox es la caja YA rotada; el tamaño real (size) lo agrega el plugin a los rotados.
 function layoutBox(node) {
 	const bb = node.absoluteBoundingBox;
 	if (!bb || !rotationOf(node) || !node.size) return bb;
@@ -778,7 +705,7 @@ function rotationOf(node) {
 		// `rotation` sí viene siempre, pero la especificación no aclara su unidad
 		if (Math.abs(node.rotation || 0) > 1e-3)
 			ctx.notes.add(
-				"Hay elementos rotados, pero la respuesta no trae su geometría (geometry=paths): se usó la caja rotada y no se aplicó la rotación. Vuelve a pedirla con --refresh.",
+				"Hay elementos rotados, pero la entrada no trae su geometría (size/relativeTransform): se usó la caja rotada y no se aplicó la rotación. Exporta de nuevo con la versión actual del plugin.",
 			);
 		return 0;
 	}
@@ -1006,13 +933,8 @@ function fillCss(node) {
 	const layers = vis.slice().reverse(); // Figma: abajo→arriba; CSS: arriba→abajo
 	const styleVar = styleToken(sty(node, "fill"));
 
-	if (layers.length === 1 && layers[0].type === "SOLID") {
-		const p = layers[0];
-		const c = solidCss(p);
-		return {
-			"background-color": styleVar && !isBound(p) ? tokenize(styleVar, c) : c,
-		};
-	}
+	if (layers.length === 1 && layers[0].type === "SOLID")
+		return { "background-color": styledColor(node, "fill", layers[0]) };
 	const parts = layers
 		.map((p, i) => {
 			const last = i === layers.length - 1;
@@ -1085,16 +1007,14 @@ function strokeCss(node) {
 	const vis = visiblePaints(node.strokes);
 	if (!vis.length) return { css: {}, inset: NO_INSET };
 	const p = vis[vis.length - 1];
-	let c =
+	const c =
 		p.type === "SOLID"
-			? solidCss(p)
+			? styledColor(node, "stroke", p)
 			: color(((p.gradientStops || [])[0] || {}).color);
 	if (p.type !== "SOLID")
 		ctx.notes.add(
 			"Hay bordes con degradado; se aproximaron con el primer color.",
 		);
-	const st = styleToken(sty(node, "stroke"));
-	if (st && p.type === "SOLID" && !isBound(p)) c = tokenize(st, c);
 	const style = (node.strokeDashes || []).length ? "dashed" : "solid";
 	const bv = node.boundVariables || {};
 	const w = node.strokeWeight == null ? 1 : node.strokeWeight;
@@ -1286,7 +1206,18 @@ function textCss(node, el) {
 	} else {
 		el.text = chars.length > 300 ? chars.slice(0, 297) + "…" : chars;
 	}
+	// Recién ahora: los segmentos se comparan contra el color sin token
+	const solid = visiblePaints(node.fills).find((p) => p.type === "SOLID");
+	if (solid && css.color) css.color = styledColor(node, "fill", solid);
 	return css;
+}
+
+// Color de una pintura sólida con el estilo de color de la capa (fill/stroke) como token,
+// salvo que esté enlazada a una variable (la variable tiene prioridad).
+function styledColor(node, key, paint) {
+	const c = solidCss(paint);
+	const st = styleToken(sty(node, key));
+	return st && !isBound(paint) ? tokenize(st, c) : c;
 }
 
 function fontCss(s, fills) {
@@ -1414,9 +1345,12 @@ function isIconish(n) {
 	return !own && n.children.every(isVectorish) && hasTrueVector(n);
 }
 function vectorColor(n) {
-	for (const list of [n.fills, n.strokes])
+	for (const [list, key] of [
+		[n.fills, "fill"],
+		[n.strokes, "stroke"],
+	])
 		for (const p of visiblePaints(list))
-			if (p.type === "SOLID") return solidCss(p);
+			if (p.type === "SOLID") return styledColor(n, key, p);
 	for (const c of n.children || []) {
 		if (c.visible === false) continue;
 		const x = vectorColor(c);
@@ -1561,7 +1495,7 @@ function notes(subs) {
 		);
 	if (ctx.icons.size)
 		n.push(
-			'Íconos: los monocromos usan currentColor en el SVG (con --assets) y su color se define con `color` en CSS; solo funciona si el SVG va inline (p. ej. SVGR), no con <img>. Los marcados "multicolor" conservan sus colores.',
+			'Íconos: los monocromos usan currentColor en el SVG y su color se define con `color` en CSS; solo funciona si el SVG va inline (p. ej. SVGR), no con <img>. Los marcados "multicolor" conservan sus colores.',
 		);
 	if (ctx.unnamedVars)
 		n.push(
@@ -1638,98 +1572,56 @@ function fixIconPaths(s, rename) {
 	return s.replace(new RegExp(esc.join("|"), "g"), (m) => rename[m]);
 }
 
-// ---------------------------------------------------------------- descargas
-async function downloadAssets(token, outDir) {
+// ---------------------------------------------------------------- escritura de assets
+function writeAssets(outDir) {
 	const rename = {}; // imageRef → ruta con extensión
 	const iconRename = {}; // archivo duplicado → archivo con el mismo contenido
 	if (ctx.icons.size) {
-		try {
-			const ids = [...new Set([...ctx.icons.values()].map((i) => i.id))];
-			// En caché se guarda el SVG original (antes de currentColor)
-			const raw = await cachedAssets("icons", ".svg", ids, async (missing) => {
-				const r = await api(
-					`/images/${ctx.fileKey}?ids=${encodeURIComponent(missing.join(","))}&format=svg`,
-					token,
-				);
-				return fetchAll(missing, (id) => r.images && r.images[id]);
-			});
-			fs.mkdirSync(path.join(outDir, "assets/icons"), { recursive: true });
-			// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
-			// (ya con currentColor, así que el color tampoco las separa).
-			const byContent = new Map();
-			for (const icon of ctx.icons.values()) {
-				const buf = raw.get(icon.id);
-				if (!buf) continue;
-				let svg = buf.toString("utf8");
-				if (icon.hex) svg = toCurrentColor(svg, icon.hex);
-				const same = byContent.get(svg);
-				if (same) {
-					iconRename[icon.file] = same;
-					icon.file = same;
-					continue;
-				}
-				byContent.set(svg, icon.file);
-				fs.writeFileSync(path.join(outDir, icon.file), svg);
-				ctx.generated.add(icon.file);
+		const ids = [...new Set([...ctx.icons.values()].map((i) => i.id))];
+		const raw = bundleAssets("icons", ids);
+		fs.mkdirSync(path.join(outDir, "assets/icons"), { recursive: true });
+		// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
+		// (ya con currentColor, así que el color tampoco las separa). Los números se comparan
+		// redondeados a 0.01: una copia desplazada una fracción de píxel cambia la 5.ª decimal.
+		const byContent = new Map();
+		const shape = (svg) => svg.replace(/-?\d*\.\d+/g, (n) => String(rd(+n)));
+		for (const icon of ctx.icons.values()) {
+			const buf = raw.get(icon.id);
+			if (!buf) continue;
+			let svg = buf.toString("utf8");
+			if (icon.hex) svg = toCurrentColor(svg, icon.hex);
+			const same = byContent.get(shape(svg));
+			if (same) {
+				iconRename[icon.file] = same;
+				icon.file = same;
+				continue;
 			}
-		} catch (e) {
-			console.error(`✖ No se pudieron descargar los íconos: ${e.message}`);
+			byContent.set(shape(svg), icon.file);
+			fs.writeFileSync(path.join(outDir, icon.file), svg);
+			ctx.generated.add(icon.file);
 		}
 	}
 	if (ctx.imageRefs.size) {
-		try {
-			const bufs = await cachedAssets("images", "", [...ctx.imageRefs], async (missing) => {
-				const r = await api(`/files/${ctx.fileKey}/images`, token);
-				const urls = (r.meta && r.meta.images) || {};
-				return fetchAll(missing, (ref) => urls[ref]);
-			});
-			fs.mkdirSync(path.join(outDir, "assets/images"), { recursive: true });
-			for (const [ref, buf] of bufs) {
-				const ext = imageExt(buf);
-				fs.writeFileSync(path.join(outDir, "assets/images", ref + ext), buf);
-				rename[ref] = `assets/images/${ref}${ext}`;
-				ctx.generated.add(rename[ref]);
-			}
-		} catch (e) {
-			console.error(`✖ No se pudieron descargar las imágenes: ${e.message}`);
+		const bufs = bundleAssets("images", [...ctx.imageRefs]);
+		fs.mkdirSync(path.join(outDir, "assets/images"), { recursive: true });
+		for (const [ref, buf] of bufs) {
+			const ext = imageExt(buf);
+			fs.writeFileSync(path.join(outDir, "assets/images", ref + ext), buf);
+			rename[ref] = `assets/images/${ref}${ext}`;
+			ctx.generated.add(rename[ref]);
 		}
 	}
 	return { images: rename, icons: iconRename };
 }
 
-async function downloadPng(token, nodeId, outDir) {
-	try {
-		const bufs = await cachedAssets("preview", ".png", [nodeId], async () => {
-			const r = await api(
-				`/images/${ctx.fileKey}?ids=${encodeURIComponent(nodeId)}&format=png&scale=1`,
-				token,
-			);
-			return fetchAll([nodeId], (id) => r.images && r.images[id]);
-		});
-		const buf = bufs.get(nodeId);
-		if (!buf) return false;
-		fs.writeFileSync(path.join(outDir, "preview.png"), buf);
-		return true;
-	} catch (e) {
-		console.error(`✖ No se pudo descargar el PNG: ${e.message}`);
-		return false;
-	}
+function writePreview(nodeId, outDir) {
+	const buf = bundleAssets("preview", [nodeId]).get(nodeId);
+	if (!buf) return false;
+	fs.writeFileSync(path.join(outDir, "preview.png"), buf);
+	return true;
 }
 
-// Descarga los archivos (URLs temporales de Figma, fuera de la API: no consumen cuota).
-async function fetchAll(ids, urlOf) {
-	const out = new Map();
-	for (const id of ids) {
-		const url = urlOf(id);
-		if (!url) continue;
-		const res = await fetch(url);
-		if (!res.ok) throw new Error(`descarga ${res.status} (${id})`);
-		out.set(id, Buffer.from(await res.arrayBuffer()));
-	}
-	return out;
-}
-
-// Extensión según el contenido (en caché las imágenes se guardan sin extensión)
+// Extensión según el contenido (en el paquete las imágenes vienen sin tipo)
 function imageExt(buf) {
 	if (buf[0] === 0xff && buf[1] === 0xd8) return ".jpg";
 	if (buf.toString("ascii", 0, 3) === "GIF") return ".gif";
@@ -1738,98 +1630,6 @@ function imageExt(buf) {
 }
 
 // ---------------------------------------------------------------- utilidades
-function parseFigmaUrl(u) {
-	let url;
-	try {
-		url = new URL(u);
-	} catch {
-		fail("El link no es una URL válida.");
-	}
-	const m = url.pathname.match(/\/(?:design|file|proto)\/([a-zA-Z0-9]+)/);
-	if (!m)
-		fail(
-			"No reconozco el link. Debe ser del tipo figma.com/design/<KEY>/...?node-id=...",
-		);
-	const branch = url.pathname.match(/\/branch\/([a-zA-Z0-9]+)/);
-	const nodeParam = url.searchParams.get("node-id");
-	if (!nodeParam)
-		fail(
-			"El link no tiene node-id. En Figma: clic derecho sobre el componente → Copy/Paste as → Copy link to selection.",
-		);
-	return {
-		fileKey: branch ? branch[1] : m[1],
-		nodeId: decodeURIComponent(nodeParam).replace(/-/g, ":"),
-	};
-}
-
-// Ante un 429 se reintenta esperando lo que pide Figma (Retry-After), salvo que supere
-// FIGMA_MAX_WAIT: en algunos planes la espera es de horas y es mejor avisar que colgarse.
-const MAX_RETRIES = 3;
-
-async function api(p, token) {
-	if (opts.offline) throw new Error(`Modo offline: no se consulta Figma (${p}).`);
-	if (!token)
-		throw new Error(
-			"Falta FIGMA_TOKEN. Crea un archivo .env con la línea FIGMA_TOKEN=figd_... (token en Figma: Settings → Security → Personal access tokens).",
-		);
-	const mw = Number(process.env.FIGMA_MAX_WAIT);
-	const maxWait = process.env.FIGMA_MAX_WAIT && mw >= 0 ? mw : 60; // 0 = sin reintentos
-	for (let attempt = 0; ; attempt++) {
-		let res;
-		try {
-			ctx.requests++;
-			res = await fetch(API + p, { headers: { "X-Figma-Token": token } });
-		} catch (e) {
-			throw new Error(
-				`No se pudo conectar con api.figma.com (${(e.cause && e.cause.code) || e.message}). Revisa tu conexión o proxy.`,
-			);
-		}
-		if (res.ok) return res.json();
-		let wait = 0;
-		if (res.status === 429) {
-			wait = retryAfter(res, attempt);
-			if (attempt < MAX_RETRIES && wait <= maxWait) {
-				console.error(
-					`… Figma limitó las peticiones (429); reintento ${attempt + 1}/${MAX_RETRIES} en ${duration(wait)}.`,
-				);
-				await new Promise((r) => setTimeout(r, wait * 1000));
-				continue;
-			}
-		}
-		const body = (await res.text()).slice(0, 300);
-		const hints = {
-			400: "Petición inválida; revisa el node-id del link.",
-			403: 'Token inválido o vencido, sin el scope "File content: read", sin acceso al archivo, o tu organización bloquea los tokens personales.',
-			404: "Archivo o nodo no encontrado. Revisa el link.",
-			429:
-				wait > maxWait
-					? `Límite de peticiones de Figma alcanzado; Figma pide esperar ${duration(wait)} (más que FIGMA_MAX_WAIT=${maxWait}s).`
-					: `Límite de peticiones de Figma alcanzado tras ${MAX_RETRIES} reintentos; espera unos minutos.`,
-		};
-		const err = new Error(
-			`Figma API ${res.status}: ${hints[res.status] || body}`,
-		);
-		err.status = res.status;
-		throw err;
-	}
-}
-
-// Segundos a esperar: Retry-After (segundos o fecha HTTP) o, si no viene, 2 · 4 · 8 s.
-function retryAfter(res, attempt) {
-	const h = res.headers.get("retry-after");
-	if (h) {
-		const s = /^\d+$/.test(h.trim()) ? Number(h) : (Date.parse(h) - Date.now()) / 1000;
-		if (Number.isFinite(s)) return Math.max(1, Math.ceil(s));
-	}
-	return 2 ** (attempt + 1);
-}
-
-function duration(s) {
-	if (s < 120) return `${s} s`;
-	if (s < 7200) return `${Math.round(s / 60)} min`;
-	return `${Math.round(s / 3600)} h`;
-}
-
 // Una clase por ruta de capas (no por orden de recorrido): una capa extra en una variante
 // no corre la numeración del resto.
 function classFor(name, path, reg) {
@@ -1888,17 +1688,15 @@ function px(n) {
 }
 
 function printHelp() {
-	console.log(`Uso: node extractor.js ["<link de Figma>"] [--assets] [--png] [--shallow] [--no-css] [--out-dir dir]
-       node extractor.js --from respuesta.json
+	console.log(`Uso: node extractor.js figspec-<nombre>.json [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
 
-Variables (.env o entorno): FIGMA_TOKEN (obligatoria), FIGMA_LINK, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false),
-  FIGMA_MAX_WAIT (segundos máximos de espera al reintentar tras un 429; 60 por defecto; 0 = sin reintentos),
-  FIGMA_OFFLINE (true: solo caché), FIGMA_CACHE_DIR (por defecto .figspec-cache).
-Caché: las respuestas de Figma se guardan y se reutilizan; --refresh pide todo de nuevo y limpia
-  caché y salida anterior (solo lo generado por el extractor),
-  --offline (modo de pruebas) nunca usa la red.
-Los parámetros anulan al .env; --no-assets, --no-png, --no-shallow y --css desactivan/activan lo definido allí.`);
+El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
+También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
+
+Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_OUT_DIR,
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false).
+Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
+Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);
 }
 
 function fail(msg) {
@@ -1906,4 +1704,8 @@ function fail(msg) {
 	process.exit(1);
 }
 
-main().catch((e) => fail(e.message));
+try {
+	main();
+} catch (e) {
+	fail(e.message);
+}

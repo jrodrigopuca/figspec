@@ -1,57 +1,44 @@
 # figspec
 
-Dado un link de Figma y un token, extrae un componente (y sus subcomponentes) como:
+Exporta un componente de Figma (y sus subcomponentes) con un plugin y lo convierte en:
 
 - **`component.json`**: estructura, props, variantes, subcomponentes y estilos por clase. Pensado como especificación para construir el componente, a mano o con un LLM.
 - **`<Componente>.module.css`**: un CSS Module por componente, listo para React.
-- **`tokens.css`**: variables CSS (`:root`) de los tokens usados.
-- Opcional: íconos SVG (recoloreables con `currentColor`), imágenes y una vista previa `preview.png`.
+- **`tokens.css`**: variables CSS (`:root`) de los tokens usados, con los nombres de estilos y variables de Figma.
+- **`assets/`**: íconos SVG (recoloreables con `currentColor`) e imágenes, y una vista previa `preview.png`.
 
-Sin dependencias: un solo archivo, Node 18+.
+Sin dependencias ni red: el plugin corre dentro de Figma y el extractor es un solo archivo para Node 18+. No usa la API REST de Figma, cuyas cuotas en algunos planes y tipos de asiento son de pocas peticiones al mes.
 
-## Configuración
+## 1. Instalar el plugin
 
-1. Crea un token en Figma: **Settings → Security → Personal access tokens**, con scope *File content: read*.
-2. Copia `.env.example` como `.env` y completa los valores:
+En la **app de escritorio** de Figma: **Plugins → Development → Import plugin from manifest…** y elige `plugin/manifest.json`.
 
-```sh
-FIGMA_TOKEN=figd_xxx
-FIGMA_LINK=https://www.figma.com/design/<KEY>/<Nombre>?node-id=1-2
-```
+Los plugins solo están disponibles en archivos donde tienes **permiso de edición**. Si el diseño está en un archivo de solo lectura, copia el frame a un borrador tuyo.
 
-El link se obtiene con clic derecho sobre el componente → **Copy/Paste as → Copy link to selection**.
+## 2. Exportar el componente
 
-## Uso
+Selecciona el componente, ejecuta **figspec export** y pulsa **Exportar**. Se descarga `figspec-<nombre>.json` con todo lo necesario: el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa y los nombres de las variables. Si la descarga no funciona, usa **Copiar al portapapeles** y pégalo en un archivo.
+
+## 3. Generar la salida
 
 ```sh
-node extractor.js                      # usa FIGMA_LINK del .env
-node extractor.js "<link>" --assets    # link por parámetro + descarga de íconos e imágenes
+node extractor.js figspec-<nombre>.json
 ```
 
 | Parámetro | Variable en `.env` | Efecto |
 |---|---|---|
-| `"<link>"` | `FIGMA_LINK` | Componente a extraer |
+| `<archivo>` (o `--from <archivo>`) | `FIGMA_FROM` | Paquete exportado con el plugin |
 | `--out-dir <dir>` | `FIGMA_OUT_DIR` | Carpeta de salida (por defecto `figma-<componente>/`) |
-| `--assets` / `--no-assets` | `FIGMA_ASSETS` | Descarga íconos (SVG) e imágenes |
-| `--png` / `--no-png` | `FIGMA_PNG` | Descarga `preview.png` |
+| `--no-assets` / `--assets` | `FIGMA_ASSETS` | Escribe íconos e imágenes (activado por defecto) |
+| `--no-png` / `--png` | `FIGMA_PNG` | Escribe `preview.png` (activado por defecto) |
 | `--shallow` / `--no-shallow` | `FIGMA_SHALLOW` | No describe los subcomponentes, solo cómo se usan |
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
-| `--offline` / `--online` | `FIGMA_OFFLINE` | Modo de pruebas: solo usa la caché, nunca la red ni el token |
-| `--refresh` | — | Vuelve a pedir todo y limpia la caché del archivo y la salida anterior |
-| — | `FIGMA_CACHE_DIR` | Carpeta de la caché (por defecto `.figspec-cache/`) |
-| — | `FIGMA_MAX_WAIT` | Espera máxima (s) al reintentar tras un 429 (por defecto 60; `0` desactiva los reintentos) |
-| `--from <archivo>` | — | Procesa una respuesta guardada de `/v1/files/:key/nodes` (sin red) |
 
-Prioridad: parámetro > variable de entorno > `.env` > valor por defecto.
+Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
 
-### Caché y cuota de la API
+Cada ejecución **reemplaza la salida anterior**: borra los archivos que el extractor generó la vez anterior (registrados en `.figspec-manifest.json`) y no toca nada más de la carpeta, así que puede ser parte de tu proyecto (por ejemplo `src/components/Menu`).
 
-Figma limita las peticiones según el plan y el tipo de asiento; en los niveles más bajos la cuota es de pocas peticiones al mes. Por eso todo lo que consume cuota (respuesta del nodo, variables, íconos, imágenes y vista previa) se guarda en `.figspec-cache/` y se reutiliza: la segunda ejecución sobre el mismo nodo no hace peticiones. Al terminar se muestra cuántas se hicieron.
-
-- `--refresh`: el diseño cambió en Figma y quieres la versión nueva. Pide todo de nuevo y, solo si la petición funciona, borra la caché de ese archivo y los archivos que el extractor generó antes (registrados en `.figspec-manifest.json` dentro de la carpeta de salida; nada más se toca).
-- `--offline`: modo de pruebas; trabaja solo con lo guardado (no necesita token).
-
-Si Figma limita las peticiones (429), se reintenta hasta 3 veces esperando lo que indica `Retry-After`. Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto), el extractor se detiene y dice cuánto hay que esperar.
+El extractor también acepta una respuesta guardada de `GET /v1/files/:key/nodes` de la API REST, sin íconos ni imágenes.
 
 ## Cómo usar la salida
 

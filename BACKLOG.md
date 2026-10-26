@@ -3,6 +3,17 @@
 Cambios detectados en la revisión del extractor (Figma → estructura + CSS Modules).
 Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles de layout · **P3** pulido.
 
+## Decisión: solo plugin, sin API REST (2026-10-26)
+
+La API REST resultó inviable: con plan Starter o asientos View/Collab la cuota es de pocas
+peticiones al mes y, al agotarla, Figma bloqueó el token **110 h**. El plugin (#13) exporta lo mismo
+sin cuota y además da los nombres de variables. Se eliminó del extractor todo lo de la API: token,
+link, petición de nodes/variables/imágenes, caché, reintentos ante 429, `--offline` y `--refresh`
+(≈260 líneas). La entrada es el paquete del plugin (parámetro o `FIGMA_FROM`); íconos y vista previa
+pasan a estar activados por defecto, y la limpieza de la salida anterior (manifiesto) es automática.
+Los ítems 11 y 12 quedan **retirados**; el código sigue en la historia de git (el último commit
+con la API es `0e71a12`) por si hiciera falta recuperarlo.
+
 ## P1
 
 - [x] **1. Íconos distintos colapsan en el mismo SVG.**
@@ -59,14 +70,15 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   `variantProps`. Los textos enlazados a una prop se excluyen (su contenido sale de la prop).
   _Límite:_ con segmentos de estilo distinto solo se registra el contenido, no el estilo por segmento.
 
-- [x] **11. Sin reintentos ante el límite de peticiones (429).**
+- [x] **11. Sin reintentos ante el límite de peticiones (429).** _Retirado: se eliminó la API._
   Si Figma responde 429 durante la descarga de íconos o imágenes, se muestra un aviso y la salida
   queda sin assets (y sin unificación de íconos). Pasó en una prueba real con varias ejecuciones seguidas.
   _Arreglo:_ `api()` reintenta hasta 3 veces esperando `Retry-After` (segundos o fecha HTTP; sin
   cabecera: 2 · 4 · 8 s). Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto) falla
   enseguida diciendo cuánto esperar. Probado con 7 escenarios simulados.
 
-- [~] **12. (P1) Cada ejecución gasta varias peticiones de una cuota que puede ser muy baja.**
+- [x] **12. (P1) Cada ejecución gasta varias peticiones de una cuota que puede ser muy baja.**
+  _Retirado: se eliminó la API; el plugin no consume cuota._
   _Hecho:_ caché en `.figspec-cache/` (nodes, variables —incluido el error, para no repetir un 403—,
   SVG originales, imágenes, vista previa). Solo se pide lo que falta; `--refresh` vuelve a pedir todo;
   `--offline` / `FIGMA_OFFLINE` es el modo de pruebas (sin red ni token). Al final se muestra cuántas
@@ -102,24 +114,52 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   _Arreglo:_ la petición de nodes agrega `geometry=paths` (misma petición, respuesta más pesada).
   Rotados: tamaño de `size`, caja sin rotar centrada en la de Figma y `rotate()`; verificado
   numéricamente (la caja que dibuja el navegador coincide con la de Figma a 90° y 30°).
-  Sin geometría (caché vieja, `--from`): comportamiento anterior + nota que sugiere `--refresh`.
+  Sin geometría: comportamiento anterior + nota. (Con el plugin, la geometría la agrega
+  `addRotationGeometry`, ver #13.)
   _Límites:_ dentro de auto layout Figma reserva la caja rotada y CSS no (nota); hijos de un padre
   rotado y transformaciones espejadas (flip) no se tratan. Los íconos no cambian: el SVG exportado
   ya viene rotado.
 
-- [ ] **8. Colores de texto no se tokenizan con estilos de color.**
+- [x] **8. Colores de texto no se tokenizan con estilos de color.**
   `fontCss` ignora `styles.fill` en nodos TEXT; solo se tokeniza si hay variable enlazada.
+  También afectaba al `color` de los íconos (`vectorColor`).
+  _Arreglo:_ `styledColor()` aplica el estilo de color de la capa como token (salvo variable
+  enlazada) en fondos, bordes, textos e íconos. En el texto se aplica después de calcular los
+  segmentos, para que no repitan el color. Verificado con el menú real: 12 colores pasan a token.
 
 - [ ] **9. Colisión de nombres de subcomponentes / archivos.**
   `buildSubs` indexa por `pascal(name)`: dos componentes homónimos (o un sub con el nombre de la raíz)
   se pisan en el JSON y en el `.module.css`.
 
+- [x] **13. Plugin de Figma para exportar sin la API REST (`plugin/`).**
+  Exporta la selección con `exportAsync({ format: "JSON_REST_V1" })` (mismo formato que la API),
+  los SVG de los íconos (misma regla que el extractor), imágenes (`getImageByHash`), vista previa y
+  los nombres de variables (`figma.variables`, que la REST solo da en Enterprise), en un solo JSON
+  que `--from` reconoce (`"figspec": 1`). Probado con un `figma` simulado y el extractor sin red.
+  _Probado en Figma real_ (botón "Salir", nodo 33:602): la descarga funciona, el JSON trae
+  posiciones, sizing y estilos completos y el extractor genera la salida sin red.
+  `JSON_REST_V1` **no** trae `size`/`relativeTransform`: el plugin los agrega desde el nodo en los
+  elementos rotados (`addRotationGeometry`; probado con un `figma` simulado).
+  _Menú comparado con la API_ (copia en borrador, nodo 33:583, contra 32:18 por la API): mismos
+  archivos, CSS, tokens y `component.json` idénticos (salvo `meta.source`). Los SVG coinciden byte a
+  byte, salvo uno con diferencias en la 5.ª decimal (copia desplazada una fracción de píxel); la
+  unificación de íconos ahora compara los números redondeados a 0.01.
+  _Pendiente de verificar en real:_ imágenes (`imageRef` ↔ `getImageByHash`), nombres de variables y
+  rotaciones.
+  _Requisito:_ permiso de edición en el archivo (en solo lectura los plugins no están disponibles).
+  El manifest no lleva `networkAccess`: con `allowedDomains: ["none"]` Figma lo rechazaba.
+
+- [x] **14. Íconos en HUG quedaban sin tamaño en el CSS.**
+  Un frame en HUG que se convierte en `<svg>` pierde el contenido que definía su tamaño; el CSS no
+  declaraba `width`/`height` (dependía de los atributos del SVG). Ahora se toma de la caja exportada.
+  Detectado con el paquete real del plugin; afectaba también a la ruta de la API.
+
 ## P3
 
 - [x] Encabezado y `printHelp` dicen `figma-extract.js`; el archivo es `extractor.js`.
-- [ ] `--assets` / `--png` se ignoran en silencio con `--from`: avisar.
+- [ ] Con una respuesta de `/nodes` (no un paquete del plugin) no hay íconos ni imágenes y no se avisa.
 - [x] `subscribed_id` no existe en `/variables/local`; quitar ese bloque.
-- [ ] `/images?ids=…` con muchos íconos puede exceder el largo de URL: pedir en tandas.
+- [x] `/images?ids=…` con muchos íconos puede exceder el largo de URL. _Retirado: se eliminó la API._
 - [ ] Documentar aproximaciones en `notes`: `rotate` en hijos absolutos, `INNER_SHADOW` en texto
   (sale como `text-shadow` sin `inset`).
 - [x] **(P2)** (Consecuencia de #1) Los íconos que no son instancias se deduplicaban por `node.id`:

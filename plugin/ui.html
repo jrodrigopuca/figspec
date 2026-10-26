@@ -1,0 +1,101 @@
+<style>
+	body { font: 12px/1.4 Inter, system-ui, sans-serif; margin: 12px; color: #222; }
+	#sel { font-weight: 600; margin-bottom: 8px; min-height: 17px; }
+	label { display: block; margin: 4px 0; }
+	button { margin-top: 8px; margin-right: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+	button.primary { background: #0d99ff; border-color: #0d99ff; color: #fff; }
+	button:disabled { opacity: 0.5; cursor: default; }
+	#status { margin-top: 10px; color: #555; white-space: pre-wrap; }
+	#status.error { color: #c00; }
+	#copy { display: none; }
+</style>
+
+<div id="sel">Selecciona un elemento</div>
+<label><input type="checkbox" id="assets" checked /> Íconos (SVG) e imágenes</label>
+<label><input type="checkbox" id="png" checked /> Vista previa (PNG)</label>
+<button class="primary" id="export" disabled>Exportar</button>
+<button id="copy">Copiar al portapapeles</button>
+<div id="status"></div>
+
+<script>
+	const $ = (id) => document.getElementById(id);
+	let lastJson = null;
+
+	$("export").onclick = () => {
+		$("export").disabled = true;
+		$("copy").style.display = "none";
+		status("Exportando…");
+		parent.postMessage(
+			{ pluginMessage: { type: "export", options: { assets: $("assets").checked, png: $("png").checked } } },
+			"*",
+		);
+	};
+
+	// Si la descarga no funciona en tu versión de Figma, el JSON se puede copiar y pegar en un archivo
+	$("copy").onclick = () => {
+		const t = document.createElement("textarea");
+		t.value = lastJson;
+		document.body.appendChild(t);
+		t.select();
+		const ok = document.execCommand("copy");
+		t.remove();
+		status(ok ? "Copiado. Pégalo en un archivo .json." : "No se pudo copiar.", !ok);
+	};
+
+	onmessage = (e) => {
+		const msg = e.data.pluginMessage;
+		if (!msg) return;
+		if (msg.type === "selection") {
+			$("sel").textContent =
+				msg.count === 1 ? msg.name : msg.count ? `${msg.count} elementos: selecciona uno solo` : "Selecciona un elemento";
+			$("export").disabled = msg.count !== 1;
+		} else if (msg.type === "progress") status(msg.text);
+		else if (msg.type === "error") {
+			status(msg.message, true);
+			$("export").disabled = false;
+		} else if (msg.type === "bundle") save(msg.bundle);
+	};
+
+	function save(bundle) {
+		// Los binarios (Uint8Array) viajan como base64 dentro del JSON
+		for (const k of Object.keys(bundle.images)) bundle.images[k] = base64(bundle.images[k]);
+		if (bundle.preview) bundle.preview = base64(bundle.preview);
+		lastJson = JSON.stringify(bundle);
+		const file = `figspec-${slug(bundle.name) || "export"}.json`;
+		const a = document.createElement("a");
+		a.href = URL.createObjectURL(new Blob([lastJson], { type: "application/json" }));
+		a.download = file;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+		const icons = Object.keys(bundle.icons).length;
+		const images = Object.keys(bundle.images).length;
+		status(
+			`Listo: ${file} (${Math.ceil(lastJson.length / 1024)} KB)\n` +
+				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}.\n` +
+				`node extractor.js --from ${file} --assets`,
+		);
+		$("copy").style.display = "inline-block";
+		$("export").disabled = false;
+	}
+
+	function base64(bytes) {
+		let s = "";
+		for (let i = 0; i < bytes.length; i += 0x8000)
+			s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+		return btoa(s);
+	}
+
+	function slug(s) {
+		return String(s)
+			.normalize("NFD")
+			.replace(/[̀-ͯ]/g, "")
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-|-$/g, "");
+	}
+
+	function status(text, error) {
+		$("status").textContent = text;
+		$("status").className = error ? "error" : "";
+	}
+</script>

@@ -1,4 +1,4 @@
-# Secretos: el token de Figma vive aquí
+# Configuración local
 .env
 .env.*
 !.env.example
@@ -6,7 +6,9 @@
 # Salida generada por el extractor (carpeta por defecto: figma-<componente>/)
 figma-*/
 
-# Respuestas de Figma guardadas (pueden incluir diseños privados)
+# Paquetes exportados con el plugin (pueden incluir diseños privados)
+figspec-*.json
+# Caché de la versión anterior basada en la API REST
 .figspec-cache/
 
 node_modules/
