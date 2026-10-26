@@ -116,7 +116,8 @@ const ctx = {
 	textStyles: {},
 	unnamedVars: false,
 	subs: new Map(),
-	shallowSubs: new Set(),
+	shallowSubs: new Map(), // id de componente → nombre en código (con --shallow)
+	codeNames: new Set(), // nombres de componente ya usados (en minúsculas: archivos en macOS/Windows)
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
 	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
@@ -176,7 +177,7 @@ function main() {
 	};
 	if (Object.keys(subcomponents).length) result.subcomponents = subcomponents;
 	if (ctx.shallowSubs.size)
-		result.externalComponents = [...ctx.shallowSubs].map(pascal);
+		result.externalComponents = [...ctx.shallowSubs.values()];
 	if (ctx.icons.size)
 		result.icons = iconList();
 	if (ctx.tokens.size)
@@ -332,7 +333,10 @@ function buildRoot(root) {
 	return assemble(name, props, [{ props: {}, node: root }], {}, false);
 }
 
-function assemble(name, props, variants, defaults, isSub) {
+// code: nombre en código ya reservado (subcomponentes); la raíz reserva el suyo antes de recorrer
+// el árbol, así ningún subcomponente puede quitárselo.
+function assemble(name, props, variants, defaults, isSub, code) {
+	if (!isSub) code = codeName(name);
 	// Compartido entre variantes: la misma ruta de capas recibe la misma clase en todas.
 	const reg = { byPath: new Map(), taken: new Set(["root"]) };
 	const built = variants.map((v) => {
@@ -374,7 +378,7 @@ function assemble(name, props, variants, defaults, isSub) {
 	);
 	if (d < 0) d = 0;
 
-	const res = { name: pascal(name) || "Componente", figmaName: name, props };
+	const res = { name: code, figmaName: name, props };
 	ctx.instanceClasses.set(
 		res,
 		new Set(built.flatMap((b) => [...b.instances])),
@@ -492,7 +496,14 @@ function buildSubs() {
 				props[k] = { type: info.type };
 				if (info.type === "variant") props[k].options = [...info.observed];
 			}
-			s.result = assemble(s.name, props, s.variants, s.variants[0].props, true);
+			s.result = assemble(
+				s.figmaName,
+				props,
+				s.variants,
+				s.variants[0].props,
+				true,
+				s.name,
+			);
 		}
 	}
 	const out = {};
@@ -500,21 +511,40 @@ function buildSubs() {
 	return out;
 }
 
+// Nombre en código único (PascalCase); si ya está tomado se agrega un número: Button, Button2…
+function codeName(figmaName) {
+	const base = pascal(figmaName) || "Componente";
+	let name = base;
+	for (let n = 2; ctx.codeNames.has(name.toLowerCase()); n++) name = `${base}${n}`;
+	ctx.codeNames.add(name.toLowerCase());
+	if (name !== base)
+		ctx.notes.add(
+			'Hay componentes distintos de Figma con el mismo nombre en código: se agregó un número (p. ej. Button2); "figmaName" conserva el nombre original.',
+		);
+	return name;
+}
+
+// Un subcomponente por componente de Figma (el set entero si es una variante), no por nombre:
+// dos componentes distintos pueden llamarse igual (p. ej. uno local y otro de una biblioteca).
+// Devuelve el nombre en código con el que se referencia la instancia.
 function registerSub(cname, node) {
+	const meta = ctx.components[node.componentId];
+	const id = (meta && meta.componentSetId) || node.componentId || cname;
 	if (opts.shallow) {
-		ctx.shallowSubs.add(cname);
-		return;
+		if (!ctx.shallowSubs.has(id)) ctx.shallowSubs.set(id, codeName(cname));
+		return ctx.shallowSubs.get(id);
 	}
-	let s = ctx.subs.get(cname);
+	let s = ctx.subs.get(id);
 	if (!s) {
 		s = {
-			name: cname,
+			name: codeName(cname),
+			figmaName: cname,
 			variants: [],
 			keys: new Set(),
 			propInfo: {},
 			done: false,
 		};
-		ctx.subs.set(cname, s);
+		ctx.subs.set(id, s);
 	}
 	const vprops = {};
 	for (const [k, v] of Object.entries(node.componentProperties || {})) {
@@ -528,10 +558,12 @@ function registerSub(cname, node) {
 		}
 	}
 	const key = JSON.stringify(vprops);
-	if (s.keys.has(key)) return;
-	s.keys.add(key);
-	s.variants.push({ props: vprops, node });
-	s.done = false;
+	if (!s.keys.has(key)) {
+		s.keys.add(key);
+		s.variants.push({ props: vprops, node });
+		s.done = false;
+	}
+	return s.name;
 }
 
 // ---------------------------------------------------------------- recorrido del árbol
@@ -575,13 +607,12 @@ function walk(node, parent, pctx, state, root, path = "") {
 	// Instancia de otro componente → referencia (sus estilos van en subcomponents)
 	if (!isRoot && node.type === "INSTANCE" && !isIconish(node)) {
 		const cname = componentName(node.componentId) || node.name;
-		el.component = pascal(cname);
+		el.component = registerSub(cname, node);
 		state.instances.add(el.className);
 		const p = {};
 		for (const [k, v] of Object.entries(node.componentProperties || {}))
 			p[propName(k)] = displayValue(v);
 		if (Object.keys(p).length) el.props = state.props[el.className] = p;
-		registerSub(cname, node);
 		put();
 		return el;
 	}

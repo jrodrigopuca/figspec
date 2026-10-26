@@ -127,9 +127,18 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   enlazada) en fondos, bordes, textos e íconos. En el texto se aplica después de calcular los
   segmentos, para que no repitan el color. Verificado con el menú real: 12 colores pasan a token.
 
-- [ ] **9. Colisión de nombres de subcomponentes / archivos.**
+- [x] **9. Colisión de nombres de subcomponentes / archivos.**
   `buildSubs` indexa por `pascal(name)`: dos componentes homónimos (o un sub con el nombre de la raíz)
   se pisan en el JSON y en el `.module.css`.
+  _Era peor:_ los subcomponentes se agrupaban por nombre, así que dos componentes distintos con el
+  mismo nombre se **fusionaban** (uno desaparecía), y un subcomponente con el nombre de la raíz
+  **sobrescribía el CSS de la raíz**.
+  _Arreglo:_ un subcomponente por componente de Figma (el set si es variante, si no el componente);
+  nombres en código únicos desde `codeName()` (la raíz reserva el suyo primero; sin distinguir
+  mayúsculas, por los sistemas de archivos de macOS/Windows), con sufijo numérico (`Button2`) y nota.
+  `figmaName` conserva el original. También en `--shallow` (`externalComponents`).
+  _Límite:_ las props de tipo swap (`INSTANCE_SWAP`) siguen mostrando el nombre de Figma en
+  PascalCase, sin el sufijo, si el componente referido tiene un homónimo.
 
 - [x] **13. Plugin de Figma para exportar sin la API REST (`plugin/`).**
   Exporta la selección con `exportAsync({ format: "JSON_REST_V1" })` (mismo formato que la API),
