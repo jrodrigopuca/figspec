@@ -1,0 +1,25 @@
+{
+  "name": "figspec",
+  "version": "0.1.0",
+  "description": "Extrae un componente de Figma (estructura, variantes, subcomponentes y tokens) como component.json + CSS Modules.",
+  "bin": {
+    "figspec": "extractor.js"
+  },
+  "files": [
+    "extractor.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "figma",
+    "css-modules",
+    "design-tokens",
+    "react",
+    "design-to-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jrodrigopuca/figspec.git"
+  }
+}

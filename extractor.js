@@ -1,0 +1,1613 @@
+#!/usr/bin/env node
+/**
+ * figma-extract.js  (v2)
+ * Convierte un componente de Figma en:
+ *   - component.json   → estructura (componente + subcomponentes) y estilos CSS por clase
+ *   - *.module.css     → un CSS Module por componente, listo para React
+ *   - tokens.css       → variables CSS (:root) de los tokens usados
+ *
+ * Requisitos: Node 18+ y un personal access token de Figma con scope "File content: read".
+ *
+ * Uso:
+ *   1. Crea un archivo .env (en la carpeta donde ejecutas o junto al script); ver .env.example.
+ *   2. node extractor.js ["<link al componente>"] [opciones]
+ *
+ * Opciones (parámetro > variable de entorno > .env > valor por defecto):
+ *   "<link>"          Link al componente.                                     FIGMA_LINK
+ *   --assets          Descarga íconos (SVG) e imágenes usadas en assets/.     FIGMA_ASSETS=true
+ *   --png             Descarga una vista previa preview.png (referencia LLM). FIGMA_PNG=true
+ *   --shallow         No describe los subcomponentes, solo cómo se usan.      FIGMA_SHALLOW=true
+ *   --no-css          Solo genera component.json.                             FIGMA_CSS=false
+ *   --out-dir <dir>   Carpeta de salida (por defecto: figma-<componente>/).   FIGMA_OUT_DIR
+ *   --no-assets, --no-png, --no-shallow, --css   Anulan lo definido en el .env.
+ *   --from <archivo>  Procesa una respuesta guardada de /v1/files/:key/nodes (sin red; solo parámetro).
+ *
+ * El token se lee siempre de FIGMA_TOKEN (nunca por parámetro).
+ */
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+
+const API = "https://api.figma.com/v1";
+const VECTOR_TYPES = new Set([
+	"VECTOR",
+	"BOOLEAN_OPERATION",
+	"STAR",
+	"REGULAR_POLYGON",
+]);
+const ABSENT = Symbol("absent");
+// Espacio que el borde CSS ocupa hacia adentro en cada lado (se descuenta de padding y offsets)
+const NO_INSET = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+const allSides = (w) => ({ top: w, right: w, bottom: w, left: w });
+
+// ---------------------------------------------------------------- .env
+// Lee FIGMA_TOKEN (y otras variables) desde un .env en la carpeta actual o en la del script.
+// Las variables ya definidas en el entorno tienen prioridad.
+loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, ".env")]);
+
+function loadEnv(files) {
+	for (const file of [...new Set(files)]) {
+		let text;
+		try {
+			text = fs.readFileSync(file, "utf8");
+		} catch {
+			continue;
+		}
+		for (const line of text.split(/\r?\n/)) {
+			const m = line.match(
+				/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/,
+			);
+			if (!m || process.env[m[1]] !== undefined) continue;
+			let v = m[2];
+			if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
+			else v = v.replace(/\s+#.*$/, "");
+			process.env[m[1]] = v;
+		}
+	}
+}
+
+// ---------------------------------------------------------------- CLI
+// Valores por defecto desde el entorno (.env incluido); los parámetros los anulan.
+const opts = {
+	url: process.env.FIGMA_LINK || null,
+	from: null,
+	outDir: process.env.FIGMA_OUT_DIR || null,
+	css: envFlag("FIGMA_CSS", true),
+	assets: envFlag("FIGMA_ASSETS", false),
+	png: envFlag("FIGMA_PNG", false),
+	shallow: envFlag("FIGMA_SHALLOW", false),
+};
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+	const a = argv[i];
+	if (a === "--assets") opts.assets = true;
+	else if (a === "--no-assets") opts.assets = false;
+	else if (a === "--png") opts.png = true;
+	else if (a === "--no-png") opts.png = false;
+	else if (a === "--shallow") opts.shallow = true;
+	else if (a === "--no-shallow") opts.shallow = false;
+	else if (a === "--css") opts.css = true;
+	else if (a === "--no-css") opts.css = false;
+	else if (a === "--out-dir") opts.outDir = argv[++i];
+	else if (a === "--from" || a === "--json") opts.from = argv[++i];
+	else if (a === "-h" || a === "--help") {
+		printHelp();
+		process.exit(0);
+	} else if (!a.startsWith("--")) opts.url = a;
+	else fail(`Opción desconocida: ${a}`);
+}
+
+function envFlag(name, def) {
+	const v = (process.env[name] || "").trim();
+	if (!v) return def;
+	if (/^(1|true|yes|si|sí|on)$/i.test(v)) return true;
+	if (/^(0|false|no|off)$/i.test(v)) return false;
+	fail(`${name} debe ser true o false (valor actual: "${v}").`);
+}
+
+const ctx = {
+	fileKey: null,
+	styles: {},
+	components: {},
+	componentSets: {},
+	variables: {},
+	tokens: new Map(),
+	textStyles: {},
+	unnamedVars: false,
+	subs: new Map(),
+	shallowSubs: new Set(),
+	icons: new Map(), // componentId | node.id → { name, id, file }
+	iconFiles: new Map(), // nombre de archivo → veces usado
+	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
+	imageRefs: new Set(),
+	notes: new Set(),
+};
+
+// ---------------------------------------------------------------- main
+async function main() {
+	let data, nodeId, token;
+
+	if (opts.from) {
+		data = JSON.parse(fs.readFileSync(opts.from, "utf8"));
+		nodeId = Object.keys(data.nodes || {})[0];
+		if (!nodeId) fail("El JSON no tiene el formato de /v1/files/:key/nodes.");
+		ctx.fileKey = "(local)";
+	} else {
+		if (!opts.url) {
+			printHelp();
+			fail(
+				'Falta el link: define FIGMA_LINK en el .env o pásalo como parámetro (node extractor.js "<link>").',
+			);
+		}
+		if (typeof fetch !== "function") fail("Necesitas Node 18 o superior.");
+		token = process.env.FIGMA_TOKEN;
+		if (!token)
+			fail(
+				"Falta FIGMA_TOKEN. Crea un archivo .env con la línea FIGMA_TOKEN=figd_... (token en Figma: Settings → Security → Personal access tokens).",
+			);
+		let fileKey;
+		({ fileKey, nodeId } = parseFigmaUrl(opts.url));
+		ctx.fileKey = fileKey;
+		data = await api(
+			`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`,
+			token,
+		);
+		try {
+			// Solo para miembros full de organizaciones Enterprise (scope file_variables:read).
+			const v = await api(`/files/${fileKey}/variables/local`, token);
+			for (const variable of Object.values(
+				(v.meta && v.meta.variables) || {},
+			)) {
+				ctx.variables[variable.id] = variable;
+				if (variable.subscribed_id)
+					ctx.variables[variable.subscribed_id] = variable;
+			}
+		} catch {
+			/* sin nombres de variables: se usan los valores */
+		}
+	}
+
+	const entry = data.nodes && data.nodes[nodeId];
+	if (!entry || !entry.document)
+		fail(
+			`No se encontró el nodo ${nodeId}. Copia el link con clic derecho → Copy link to selection.`,
+		);
+	ctx.styles = entry.styles || {};
+	ctx.components = entry.components || {};
+	ctx.componentSets = entry.componentSets || {};
+
+	const root = entry.document;
+	const component = buildRoot(root);
+	const subcomponents = buildSubs();
+	ctx.rootComponent = component;
+
+	const result = {
+		meta: {
+			source: { file: ctx.fileKey, node: nodeId },
+			notes: notes(subcomponents),
+		},
+		component,
+	};
+	if (Object.keys(subcomponents).length) result.subcomponents = subcomponents;
+	if (ctx.shallowSubs.size)
+		result.externalComponents = [...ctx.shallowSubs].map(pascal);
+	if (ctx.icons.size)
+		result.icons = iconList();
+	if (ctx.tokens.size)
+		result.tokens = Object.fromEntries(
+			[...ctx.tokens].sort((a, b) => a[0].localeCompare(b[0])),
+		);
+	if (Object.keys(ctx.textStyles).length) result.textStyles = ctx.textStyles;
+
+	const outDir =
+		opts.outDir || `figma-${kebab(component.name) || "componente"}`;
+	fs.mkdirSync(outDir, { recursive: true });
+
+	let rename = { images: {}, icons: {} };
+	if (opts.assets && token) rename = await downloadAssets(token, outDir);
+	if (result.icons) result.icons = iconList(); // tras deduplicar por contenido
+	const fix = (s) =>
+		fixIconPaths(fixImagePaths(s, rename.images), rename.icons);
+
+	const files = [];
+	const write = (name, content) => {
+		fs.writeFileSync(path.join(outDir, name), fix(content));
+		files.push(name);
+	};
+	const json = compactJson(result);
+	write("component.json", json + "\n");
+	if (opts.css) {
+		write(`${component.name}.module.css`, moduleCss(component));
+		for (const sub of Object.values(subcomponents))
+			write(`${sub.name}.module.css`, moduleCss(sub));
+		if (ctx.tokens.size) write("tokens.css", tokensCss());
+	}
+	if (opts.png && token) {
+		if (await downloadPng(token, nodeId, outDir)) files.push("preview.png");
+	}
+
+	console.error(`✔ ${outDir}/`);
+	for (const f of files) console.error(`   ${f}`);
+	console.error(`  component.json ≈ ${Math.ceil(json.length / 4)} tokens`);
+}
+
+// ---------------------------------------------------------------- componentes y variantes
+function buildRoot(root) {
+	if (root.type === "COMPONENT_SET") {
+		const defs = root.componentPropertyDefinitions || {};
+		const variants = (root.children || [])
+			.filter((c) => c.type === "COMPONENT" && c.visible !== false)
+			.map((c) => ({ props: parseVariantName(c.name), node: c }));
+		return assemble(
+			root.name,
+			propsFromDefs(defs),
+			variants,
+			defaultVariant(defs),
+			false,
+		);
+	}
+	let name = root.name;
+	let props = {};
+	if (root.type === "COMPONENT") {
+		const meta = ctx.components[root.id];
+		if (meta && meta.componentSetId && ctx.componentSets[meta.componentSetId]) {
+			name = ctx.componentSets[meta.componentSetId].name;
+			for (const [k, v] of Object.entries(parseVariantName(root.name)))
+				props[k] = { type: "variant", options: [v], default: v };
+			ctx.notes.add(
+				"Seleccionaste una sola variante; para ver todas, copia el link del component set completo.",
+			);
+		}
+		Object.assign(
+			props,
+			propsFromDefs(root.componentPropertyDefinitions || {}),
+		);
+	} else if (root.type === "INSTANCE") {
+		name = componentName(root.componentId) || root.name;
+		for (const [k, v] of Object.entries(root.componentProperties || {})) {
+			props[propName(k)] = { type: propType(v.type), default: displayValue(v) };
+		}
+	}
+	return assemble(name, props, [{ props: {}, node: root }], {}, false);
+}
+
+function assemble(name, props, variants, defaults, isSub) {
+	// Compartido entre variantes: la misma ruta de capas recibe la misma clase en todas.
+	const reg = { byPath: new Map(), taken: new Set(["root"]) };
+	const built = variants.map((v) => {
+		const state = {
+			styles: {},
+			classes: new Set(),
+			instances: new Set(),
+			reg,
+			bound: {},
+		};
+		const structure = walk(
+			v.node,
+			null,
+			{ needsRelative: false, inset: NO_INSET },
+			state,
+			{ sub: isSub },
+		);
+		return {
+			props: v.props,
+			structure,
+			styles: state.styles,
+			classes: state.classes,
+			instances: state.instances,
+			bound: state.bound,
+		};
+	});
+
+	// props referenciadas por capas pero no declaradas (p. ej. si solo tenemos una instancia)
+	for (const b of built)
+		for (const [k, t] of Object.entries(b.bound))
+			if (!props[k]) props[k] = { type: t };
+
+	let d = built.findIndex((b) =>
+		Object.entries(defaults || {}).every(([k, v]) => b.props[k] === v),
+	);
+	if (d < 0) d = 0;
+
+	const res = { name: pascal(name) || "Componente", figmaName: name, props };
+	ctx.instanceClasses.set(
+		res,
+		new Set(built.flatMap((b) => [...b.instances])),
+	);
+	if (built.length > 1) res.defaultVariant = built[d].props;
+	res.structure = built[d].structure;
+	if (built.length === 1) {
+		res.styles = built[0].styles;
+		return res;
+	}
+
+	const { base, variantStyles } = diffStyles(built, d);
+	res.styles = base;
+	if (variantStyles.length) res.variantStyles = variantStyles;
+
+	const sig = (s) =>
+		JSON.stringify(s, (k, v) =>
+			k === "text" || k === "props" || k === "name" || k === "segments"
+				? undefined
+				: v,
+		);
+	const ref = sig(built[d].structure);
+	const other = built
+		.filter((b, i) => i !== d && sig(b.structure) !== ref)
+		.map((b) => ({ when: b.props, structure: b.structure }));
+	if (other.length) res.variantStructures = other;
+	return res;
+}
+
+// Separa los estilos comunes (base) de los que cambian por variante.
+// Si un valor depende de una sola prop, se agrupa por esa prop; si no, por la combinación completa.
+function diffStyles(built, d) {
+	const classes = new Set();
+	built.forEach((b) => b.classes.forEach((c) => classes.add(c)));
+	const propNames = [...new Set(built.flatMap((b) => Object.keys(b.props)))];
+	const base = {};
+	const rules = new Map();
+	const add = (when, cls, prop, val) => {
+		const key = JSON.stringify(when);
+		if (!rules.has(key)) rules.set(key, { when, styles: {} });
+		const r = rules.get(key);
+		(r.styles[cls] = r.styles[cls] || {})[prop] =
+			val === undefined ? "unset" : val;
+	};
+
+	for (const cls of classes) {
+		const present = built.map((b) => b.classes.has(cls));
+		const ref = present[d] ? d : present.indexOf(true);
+		const cssProps = new Set();
+		built.forEach((b) =>
+			Object.keys(b.styles[cls] || {}).forEach((p) => cssProps.add(p)),
+		);
+		for (const prop of cssProps) {
+			const vals = built.map((b, i) =>
+				present[i] ? (b.styles[cls] || {})[prop] : ABSENT,
+			);
+			const rv = vals[ref];
+			if (rv !== undefined) (base[cls] = base[cls] || {})[prop] = rv;
+			const differs = vals.map((v) => v !== ABSENT && v !== rv);
+			if (!differs.some(Boolean)) continue;
+
+			let done = false;
+			for (const p of propNames) {
+				const m = new Map();
+				let ok = true;
+				vals.forEach((v, i) => {
+					if (v === ABSENT) return;
+					const k = built[i].props[p];
+					if (m.has(k) && m.get(k) !== v) ok = false;
+					else m.set(k, v);
+				});
+				if (!ok) continue;
+				for (const [k, v] of m) if (v !== rv) add({ [p]: k }, cls, prop, v);
+				done = true;
+				break;
+			}
+			if (!done)
+				vals.forEach((v, i) => {
+					if (differs[i]) add(built[i].props, cls, prop, v);
+				});
+		}
+	}
+	return { base, variantStyles: [...rules.values()] };
+}
+
+function buildSubs() {
+	for (let guard = 0; guard < 50; guard++) {
+		const pending = [...ctx.subs.values()].filter((s) => !s.done);
+		if (!pending.length) break;
+		for (const s of pending) {
+			s.done = true;
+			const props = {};
+			for (const [k, info] of Object.entries(s.propInfo)) {
+				props[k] = { type: info.type };
+				if (info.type === "variant") props[k].options = [...info.observed];
+			}
+			s.result = assemble(s.name, props, s.variants, s.variants[0].props, true);
+		}
+	}
+	const out = {};
+	for (const s of ctx.subs.values()) out[s.result.name] = s.result;
+	return out;
+}
+
+function registerSub(cname, node) {
+	if (opts.shallow) {
+		ctx.shallowSubs.add(cname);
+		return;
+	}
+	let s = ctx.subs.get(cname);
+	if (!s) {
+		s = {
+			name: cname,
+			variants: [],
+			keys: new Set(),
+			propInfo: {},
+			done: false,
+		};
+		ctx.subs.set(cname, s);
+	}
+	const vprops = {};
+	for (const [k, v] of Object.entries(node.componentProperties || {})) {
+		const n = propName(k);
+		const info =
+			s.propInfo[n] ||
+			(s.propInfo[n] = { type: propType(v.type), observed: new Set() });
+		if (v.type === "VARIANT") {
+			info.observed.add(v.value);
+			vprops[n] = v.value;
+		}
+	}
+	const key = JSON.stringify(vprops);
+	if (s.keys.has(key)) return;
+	s.keys.add(key);
+	s.variants.push({ props: vprops, node });
+	s.done = false;
+}
+
+// ---------------------------------------------------------------- recorrido del árbol
+// path: ruta de nombres desde la raíz con el índice entre hermanos homónimos (ver classFor).
+function walk(node, parent, pctx, state, root, path = "") {
+	const isRoot = !!root;
+	// En la raíz de un subcomponente, las referencias pertenecen al componente padre
+	const refs = isRoot && root.sub ? {} : node.componentPropertyReferences || {};
+	if (!isRoot && node.visible === false && !refs.visible) return null; // capas ocultas sin prop: restos de diseño
+	if (node.isMask)
+		ctx.notes.add(
+			"El componente usa máscaras de Figma; revisa esas capas (se aproximan con overflow/border-radius).",
+		);
+
+	const el = { name: node.name };
+	el.className = isRoot ? "root" : classFor(node.name, path, state.reg);
+	state.classes.add(el.className);
+	if (node.visible === false) el.hidden = true;
+
+	const bind = {};
+	if (refs.visible) {
+		bind.visible = propName(refs.visible);
+		state.bound[bind.visible] = "boolean";
+	}
+	if (refs.characters) {
+		bind.text = propName(refs.characters);
+		state.bound[bind.text] = "string";
+	}
+	if (refs.mainComponent) {
+		bind.swap = propName(refs.mainComponent);
+		state.bound[bind.swap] = "node";
+	}
+	if (Object.keys(bind).length) el.bind = bind;
+
+	const css = isRoot ? rootSize(node, root.sub) : placement(node, parent, pctx);
+	state.styles[el.className] = css; // reserva el lugar para que las clases sigan el orden del árbol
+	const put = () => {
+		if (!Object.keys(css).length) delete state.styles[el.className];
+	};
+
+	// Instancia de otro componente → referencia (sus estilos van en subcomponents)
+	if (!isRoot && node.type === "INSTANCE" && !isIconish(node)) {
+		const cname = componentName(node.componentId) || node.name;
+		el.component = pascal(cname);
+		state.instances.add(el.className);
+		const p = {};
+		for (const [k, v] of Object.entries(node.componentProperties || {}))
+			p[propName(k)] = displayValue(v);
+		if (Object.keys(p).length) el.props = p;
+		registerSub(cname, node);
+		put();
+		return el;
+	}
+
+	// Íconos y vectores → un solo <svg>
+	if (!isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node))) {
+		const icon = iconFor(node);
+		el.tag = "svg";
+		el.icon = icon.name;
+		el.src = icon.file;
+		if (node.type === "INSTANCE") {
+			const p = {};
+			for (const [k, v] of Object.entries(node.componentProperties || {}))
+				p[propName(k)] = displayValue(v);
+			if (Object.keys(p).length) el.props = p;
+		}
+		// Solo los monocromos se pueden recolorear con currentColor
+		const pal = vectorPalette(node);
+		if (pal && pal.size === 1) {
+			const c = vectorColor(node);
+			if (c) css.color = c;
+		} else if (!pal || pal.size > 1) el.multicolor = true; // varios colores, degradado o imagen
+		put();
+		return el;
+	}
+
+	let inset = NO_INSET;
+	if (node.type === "TEXT") {
+		el.tag = "span";
+		Object.assign(css, textCss(node, el));
+	} else {
+		const img = imageFill(node);
+		if (img) {
+			el.tag = "img";
+			el.src = `assets/images/${img.imageRef}`;
+			ctx.imageRefs.add(img.imageRef);
+			css["object-fit"] = img.scaleMode === "FIT" ? "contain" : "cover";
+		} else {
+			el.tag = "div";
+		}
+		const stroke = strokeCss(node);
+		inset = stroke.inset;
+		Object.assign(css, layoutCss(node, inset));
+		if (!img) Object.assign(css, fillCss(node));
+		Object.assign(css, stroke.css, radiusCss(node));
+	}
+	Object.assign(css, effectsCss(node), miscCss(node, isRoot));
+
+	const cctx = { needsRelative: false, inset };
+	// Las capas ocultas también cuentan: en Figma las variantes suelen compartir capas y solo
+	// cambiar su visibilidad, así que la posición entre homónimos es estable.
+	const seen = new Map();
+	const kids = (node.children || [])
+		.map((c) => {
+			const k = seen.get(c.name) || 0;
+			seen.set(c.name, k + 1);
+			return walk(c, node, cctx, state, null, `${path}\0${c.name}\0${k}`);
+		})
+		.filter(Boolean);
+	if (kids.length) el.children = kids;
+	if (cctx.needsRelative && !css.position) css.position = "relative";
+	put();
+	return el;
+}
+
+// ---------------------------------------------------------------- tamaño y posición
+function rootSize(node, isSub) {
+	const css = {};
+	const bb = node.absoluteBoundingBox;
+	if (!bb) return css;
+	const bv = node.boundVariables || {};
+	const H = node.layoutSizingHorizontal,
+		V = node.layoutSizingVertical;
+	const text = node.type === "TEXT";
+	if (H === "FIXED" || (!H && !text)) css.width = num(bb.width, bv.width);
+	else if (H === "FILL" && !isSub) css.width = "100%";
+	if (!text && (V === "FIXED" || !V)) css.height = num(bb.height, bv.height);
+	minMax(node, css);
+	return css;
+}
+
+function placement(node, parent, pctx) {
+	const css = {};
+	const bb = node.absoluteBoundingBox;
+	if (!bb || !parent) return css;
+	const bv = node.boundVariables || {};
+	const W = num(bb.width, bv.width),
+		Hh = num(bb.height, bv.height);
+	const H = node.layoutSizingHorizontal,
+		V = node.layoutSizingVertical;
+	const text = node.type === "TEXT";
+	const autoWidthText =
+		text && (node.style || {}).textAutoResize === "WIDTH_AND_HEIGHT";
+	const parentLayout =
+		parent.layoutMode && parent.layoutMode !== "NONE"
+			? parent.layoutMode
+			: null;
+
+	// Posición absoluta: padre sin auto layout, o hijo marcado como absoluto
+	if (!parentLayout || node.layoutPositioning === "ABSOLUTE") {
+		pctx.needsRelative = true;
+		// En CSS el contenedor de un hijo absoluto es la caja de padding (dentro del borde)
+		const pb = parent.absoluteBoundingBox;
+		const ins = pctx.inset || NO_INSET;
+		const left = bb.x - pb.x - ins.left,
+			top = bb.y - pb.y - ins.top;
+		const right = pb.x + pb.width - (bb.x + bb.width) - ins.right;
+		const bottom = pb.y + pb.height - (bb.y + bb.height) - ins.bottom;
+		const iw = pb.width - ins.left - ins.right,
+			ih = pb.height - ins.top - ins.bottom;
+		const c = node.constraints || {};
+		css.position = "absolute";
+		switch (c.horizontal) {
+			case "RIGHT":
+				css.right = px(right);
+				break;
+			case "LEFT_RIGHT":
+				css.left = px(left);
+				css.right = px(right);
+				break;
+			case "CENTER":
+				css.left = `calc(50% + ${rd(left + bb.width / 2 - iw / 2 - bb.width / 2)}px)`;
+				break;
+			case "SCALE":
+				css.left = `${rd((left / iw) * 100)}%`;
+				break;
+			default:
+				css.left = px(left);
+		}
+		switch (c.vertical) {
+			case "BOTTOM":
+				css.bottom = px(bottom);
+				break;
+			case "TOP_BOTTOM":
+				css.top = px(top);
+				css.bottom = px(bottom);
+				break;
+			case "CENTER":
+				css.top = `calc(50% + ${rd(top + bb.height / 2 - ih / 2 - bb.height / 2)}px)`;
+				break;
+			case "SCALE":
+				css.top = `${rd((top / ih) * 100)}%`;
+				break;
+			default:
+				css.top = px(top);
+		}
+		if (c.horizontal === "SCALE")
+			css.width = `${rd((bb.width / iw) * 100)}%`;
+		else if (c.horizontal !== "LEFT_RIGHT" && !autoWidthText) css.width = W;
+		if (c.vertical === "SCALE")
+			css.height = `${rd((bb.height / ih) * 100)}%`;
+		else if (c.vertical !== "TOP_BOTTOM" && !text) css.height = Hh;
+		minMax(node, css);
+		return css;
+	}
+
+	if (parentLayout === "GRID") {
+		if (node.gridColumnSpan > 1)
+			css["grid-column"] = `span ${node.gridColumnSpan}`;
+		if (node.gridRowSpan > 1) css["grid-row"] = `span ${node.gridRowSpan}`;
+		const al = { MIN: "start", CENTER: "center", MAX: "end" };
+		if (al[node.gridChildHorizontalAlign])
+			css["justify-self"] = al[node.gridChildHorizontalAlign];
+		if (al[node.gridChildVerticalAlign])
+			css["align-self"] = al[node.gridChildVerticalAlign];
+		if (H === "FIXED" && !autoWidthText) css.width = W;
+		if (V === "FIXED" && !text) css.height = Hh;
+		minMax(node, css);
+		return css;
+	}
+
+	// Hijo de flexbox (auto layout)
+	const row = parentLayout === "HORIZONTAL";
+	const mainS = (row ? H : V) || (node.layoutGrow === 1 ? "FILL" : "FIXED");
+	const crossS =
+		(row ? V : H) || (node.layoutAlign === "STRETCH" ? "FILL" : "FIXED");
+	const mainDim = row ? "width" : "height",
+		crossDim = row ? "height" : "width";
+	const skip = (dim) =>
+		(dim === "height" && text) || (dim === "width" && autoWidthText);
+
+	if (mainS === "FILL") {
+		css.flex = "1 1 0";
+		css[row ? "min-width" : "min-height"] = "0";
+	} else if (mainS === "FIXED" && !skip(mainDim)) {
+		css[mainDim] = row ? W : Hh;
+		css["flex-shrink"] = "0";
+	}
+	if (crossS === "FILL") css["align-self"] = "stretch";
+	else if (crossS === "FIXED" && !skip(crossDim)) css[crossDim] = row ? Hh : W;
+	minMax(node, css);
+	return css;
+}
+
+function minMax(node, css) {
+	const bv = node.boundVariables || {};
+	for (const [k, p] of [
+		["minWidth", "min-width"],
+		["maxWidth", "max-width"],
+		["minHeight", "min-height"],
+		["maxHeight", "max-height"],
+	]) {
+		if (node[k] != null) css[p] = num(node[k], bv[k]);
+	}
+}
+
+// ---------------------------------------------------------------- auto layout → flex / grid
+function layoutCss(node, inset) {
+	const css = {};
+	const bv = node.boundVariables || {};
+	const mode = node.layoutMode;
+	if (mode === "HORIZONTAL" || mode === "VERTICAL") {
+		const row = mode === "HORIZONTAL";
+		css.display = "flex";
+		css["flex-direction"] = row ? "row" : "column";
+		const wrap = node.layoutWrap === "WRAP";
+		if (wrap) css["flex-wrap"] = "wrap";
+		if (node.primaryAxisAlignItems === "SPACE_BETWEEN")
+			css["justify-content"] = "space-between";
+		else {
+			const j = { CENTER: "center", MAX: "flex-end" }[
+				node.primaryAxisAlignItems
+			];
+			if (j) css["justify-content"] = j;
+			if (node.itemSpacing > 0) css.gap = num(node.itemSpacing, bv.itemSpacing);
+			else if (node.itemSpacing < 0)
+				ctx.notes.add(
+					"Hay auto layouts con espaciado negativo (elementos superpuestos); CSS no admite gap negativo: usa margin negativo.",
+				);
+		}
+		if (wrap && node.counterAxisSpacing)
+			css[row ? "row-gap" : "column-gap"] = num(
+				node.counterAxisSpacing,
+				bv.counterAxisSpacing,
+			);
+		if (wrap && node.counterAxisAlignContent === "SPACE_BETWEEN")
+			css["align-content"] = "space-between";
+		// En CSS el valor por defecto es stretch; en Figma es "start", por eso se declara siempre.
+		css["align-items"] =
+			{
+				MIN: "flex-start",
+				CENTER: "center",
+				MAX: "flex-end",
+				BASELINE: "baseline",
+			}[node.counterAxisAlignItems || "MIN"] || "flex-start";
+		const pad = paddingCss(node, bv, inset);
+		if (pad) css.padding = pad;
+	} else if (mode === "GRID") {
+		css.display = "grid";
+		css["grid-template-columns"] =
+			node.gridColumnsSizing || `repeat(${node.gridColumnCount || 1}, 1fr)`;
+		if (node.gridRowsSizing || node.gridRowCount > 1)
+			css["grid-template-rows"] =
+				node.gridRowsSizing || `repeat(${node.gridRowCount}, auto)`;
+		if (node.gridColumnGap)
+			css["column-gap"] = num(node.gridColumnGap, bv.gridColumnGap);
+		if (node.gridRowGap) css["row-gap"] = num(node.gridRowGap, bv.gridRowGap);
+		const pad = paddingCss(node, bv, inset);
+		if (pad) css.padding = pad;
+	}
+	return css;
+}
+
+// En Figma el borde interior no ocupa espacio (salvo strokesIncludedInLayout);
+// en CSS (border-box) sí, así que se descuenta del padding para conservar las medidas.
+function paddingCss(node, bv, inset) {
+	const ins = node.strokesIncludedInLayout ? NO_INSET : inset;
+	const v = ["Top", "Right", "Bottom", "Left"].map((s) => {
+		const raw = node["padding" + s] || 0;
+		const sub = ins[s.toLowerCase()];
+		const name = varRef(bv["padding" + s]);
+		if (name) {
+			const t = tokenize(name, px(raw));
+			return sub ? `calc(${t} - ${rd(sub)}px)` : t;
+		}
+		return px(Math.max(0, raw - sub));
+	});
+	if (v.every((x) => x === "0")) return "";
+	if (v.every((x) => x === v[0])) return v[0];
+	if (v[0] === v[2] && v[1] === v[3]) return `${v[0]} ${v[1]}`;
+	if (v[1] === v[3]) return `${v[0]} ${v[1]} ${v[2]}`;
+	return v.join(" ");
+}
+
+// ---------------------------------------------------------------- relleno, borde, radio, efectos
+function visiblePaints(list) {
+	return (list || []).filter((p) => p.visible !== false);
+}
+
+function fillCss(node) {
+	const vis = visiblePaints(node.fills);
+	if (!vis.length) return {};
+	const bb = node.absoluteBoundingBox || { width: 1, height: 1 };
+	const layers = vis.slice().reverse(); // Figma: abajo→arriba; CSS: arriba→abajo
+	const styleVar = styleToken(sty(node, "fill"));
+
+	if (layers.length === 1 && layers[0].type === "SOLID") {
+		const p = layers[0];
+		const c = solidCss(p);
+		return {
+			"background-color": styleVar && !isBound(p) ? tokenize(styleVar, c) : c,
+		};
+	}
+	const parts = layers
+		.map((p, i) => {
+			const last = i === layers.length - 1;
+			if (p.type === "SOLID") {
+				const c = solidCss(p);
+				return last ? c : `linear-gradient(${c}, ${c})`;
+			}
+			if (p.type.startsWith("GRADIENT_"))
+				return gradientCss(p, bb.width, bb.height);
+			if (p.type === "IMAGE") {
+				ctx.imageRefs.add(p.imageRef);
+				const size = { FIT: "contain", TILE: "auto" }[p.scaleMode] || "cover";
+				return `url("assets/images/${p.imageRef}") center / ${size} ${p.scaleMode === "TILE" ? "repeat" : "no-repeat"}`;
+			}
+			return null;
+		})
+		.filter(Boolean);
+	if (!parts.length) return {};
+	let value = parts.join(", ");
+	if (styleVar && layers.length === 1) value = tokenize(styleVar, value);
+	return { background: value };
+}
+
+function imageFill(node) {
+	if (!["RECTANGLE", "ELLIPSE", "FRAME"].includes(node.type)) return null;
+	if (node.children && node.children.length) return null;
+	const vis = visiblePaints(node.fills);
+	return vis.length === 1 && vis[0].type === "IMAGE" ? vis[0] : null;
+}
+
+function solidCss(p) {
+	const c = color(p.color, p.opacity == null ? 1 : p.opacity);
+	const n = varRef(p.boundVariables && p.boundVariables.color);
+	return n ? tokenize(n, c) : c;
+}
+
+function isBound(p) {
+	return !!(
+		p.boundVariables &&
+		p.boundVariables.color &&
+		varRef(p.boundVariables.color)
+	);
+}
+
+function gradientCss(p, w, h) {
+	const op = p.opacity == null ? 1 : p.opacity;
+	const stops = (p.gradientStops || [])
+		.map((s) => {
+			let c = color(s.color, op);
+			const n = varRef(s.boundVariables && s.boundVariables.color);
+			if (n) c = tokenize(n, c);
+			return `${c} ${rd(s.position * 100)}%`;
+		})
+		.join(", ");
+	if (p.type === "GRADIENT_LINEAR") {
+		const [a, b] = p.gradientHandlePositions || [];
+		let ang = 180;
+		if (a && b)
+			ang =
+				((Math.atan2((b.x - a.x) * w, -(b.y - a.y) * h) * 180) / Math.PI +
+					360) %
+				360;
+		return `linear-gradient(${rd(ang)}deg, ${stops})`;
+	}
+	if (p.type === "GRADIENT_ANGULAR") return `conic-gradient(${stops})`;
+	return `radial-gradient(${stops})`;
+}
+
+function strokeCss(node) {
+	const vis = visiblePaints(node.strokes);
+	if (!vis.length) return { css: {}, inset: NO_INSET };
+	const p = vis[vis.length - 1];
+	let c =
+		p.type === "SOLID"
+			? solidCss(p)
+			: color(((p.gradientStops || [])[0] || {}).color);
+	if (p.type !== "SOLID")
+		ctx.notes.add(
+			"Hay bordes con degradado; se aproximaron con el primer color.",
+		);
+	const st = styleToken(sty(node, "stroke"));
+	if (st && p.type === "SOLID" && !isBound(p)) c = tokenize(st, c);
+	const style = (node.strokeDashes || []).length ? "dashed" : "solid";
+	const bv = node.boundVariables || {};
+	const w = node.strokeWeight == null ? 1 : node.strokeWeight;
+
+	if (node.type === "LINE")
+		return {
+			css: { "border-top": `${num(w, bv.strokeWeight)} ${style} ${c}` },
+			inset: NO_INSET,
+		};
+
+	const iw = node.individualStrokeWeights;
+	if (
+		iw &&
+		!(iw.top === iw.right && iw.right === iw.bottom && iw.bottom === iw.left)
+	) {
+		const css = {};
+		const inset = {};
+		for (const side of ["top", "right", "bottom", "left"]) {
+			inset[side] = iw[side] || 0;
+			if (iw[side]) css[`border-${side}`] = `${px(iw[side])} ${style} ${c}`;
+		}
+		if (node.strokeAlign && node.strokeAlign !== "INSIDE")
+			ctx.notes.add(
+				"Hay bordes con grosor distinto por lado y alineación center/outside; se aproximaron como bordes interiores.",
+			);
+		return { css, inset };
+	}
+	if (node.strokeAlign === "OUTSIDE")
+		return {
+			css: { outline: `${num(w, bv.strokeWeight)} ${style} ${c}` },
+			inset: NO_INSET,
+		};
+	// Centrado: mitad adentro (border) y mitad afuera (outline), como en Figma.
+	// Con trazo punteado las dos líneas no coincidirían: se aproxima como interior.
+	if (node.strokeAlign === "CENTER" && style === "solid") {
+		const half = halfOf(w, bv.strokeWeight);
+		return {
+			css: { border: `${half} solid ${c}`, outline: `${half} solid ${c}` },
+			inset: allSides(w / 2),
+		};
+	}
+	if (node.strokeAlign === "CENTER")
+		ctx.notes.add(
+			"Hay bordes punteados centrados; se aproximaron como bordes interiores.",
+		);
+	return {
+		css: { border: `${num(w, bv.strokeWeight)} ${style} ${c}` },
+		inset: allSides(w),
+	};
+}
+
+function halfOf(v, alias) {
+	const n = varRef(alias);
+	return n ? `calc(${tokenize(n, px(v))} / 2)` : px(v / 2);
+}
+
+function radiusCss(node) {
+	if (node.type === "ELLIPSE") return { "border-radius": "50%" };
+	const bv = node.boundVariables || {};
+	const rc = node.rectangleCornerRadii;
+	if (rc && !rc.every((x) => x === rc[0])) {
+		const keys = [
+			"topLeftRadius",
+			"topRightRadius",
+			"bottomRightRadius",
+			"bottomLeftRadius",
+		];
+		return { "border-radius": rc.map((r, i) => num(r, bv[keys[i]])).join(" ") };
+	}
+	const r = node.cornerRadius || (rc && rc[0]);
+	return r ? { "border-radius": num(r, bv.topLeftRadius) } : {};
+}
+
+function effectsCss(node) {
+	const vis = (node.effects || []).filter((e) => e.visible !== false);
+	const css = {};
+	const text = node.type === "TEXT";
+	const shadows = vis
+		.filter((e) => e.type === "DROP_SHADOW" || e.type === "INNER_SHADOW")
+		.map((e) => {
+			const o = e.offset || {};
+			const xy = `${px(o.x || 0)} ${px(o.y || 0)} ${px(e.radius || 0)}`;
+			return text
+				? `${xy} ${color(e.color)}`
+				: `${e.type === "INNER_SHADOW" ? "inset " : ""}${xy} ${px(e.spread || 0)} ${color(e.color)}`;
+		});
+	if (shadows.length) {
+		let v = shadows.join(", ");
+		const st = styleToken(sty(node, "effect"));
+		if (st) v = tokenize(st, v);
+		css[text ? "text-shadow" : "box-shadow"] = v;
+	}
+	// El radio de blur de Figma equivale aproximadamente al doble del de CSS
+	for (const e of vis) {
+		if (e.type === "LAYER_BLUR") css.filter = `blur(${px(e.radius / 2)})`;
+		if (e.type === "BACKGROUND_BLUR")
+			css["backdrop-filter"] = `blur(${px(e.radius / 2)})`;
+	}
+	return css;
+}
+
+function miscCss(node, isRoot) {
+	const css = {};
+	if (node.opacity != null && node.opacity < 1)
+		css.opacity = String(rd(node.opacity));
+	const blends = {
+		MULTIPLY: "multiply",
+		SCREEN: "screen",
+		OVERLAY: "overlay",
+		DARKEN: "darken",
+		LIGHTEN: "lighten",
+		COLOR_DODGE: "color-dodge",
+		COLOR_BURN: "color-burn",
+		HARD_LIGHT: "hard-light",
+		SOFT_LIGHT: "soft-light",
+		DIFFERENCE: "difference",
+		EXCLUSION: "exclusion",
+		HUE: "hue",
+		SATURATION: "saturation",
+		COLOR: "color",
+		LUMINOSITY: "luminosity",
+	};
+	if (blends[node.blendMode]) css["mix-blend-mode"] = blends[node.blendMode];
+	const t = node.relativeTransform;
+	if (!isRoot && t && t[0] && t[1]) {
+		const ang = (Math.atan2(t[1][0], t[0][0]) * 180) / Math.PI;
+		if (Math.abs(ang) > 0.5) css.transform = `rotate(${rd(ang)}deg)`;
+	}
+	if (node.clipsContent && node.children && node.children.length)
+		css.overflow = "hidden";
+	return css;
+}
+
+// ---------------------------------------------------------------- texto
+function textCss(node, el) {
+	const s = node.style || {};
+	const css = fontCss(s, node.fills);
+	if (s.textAlignHorizontal && s.textAlignHorizontal !== "LEFT") {
+		css["text-align"] = {
+			RIGHT: "right",
+			CENTER: "center",
+			JUSTIFIED: "justify",
+		}[s.textAlignHorizontal];
+	}
+	if (s.textAutoResize === "WIDTH_AND_HEIGHT") css["white-space"] = "nowrap";
+	if (s.textTruncation === "ENDING" || s.textAutoResize === "TRUNCATE") {
+		if (s.maxLines > 1)
+			Object.assign(css, {
+				display: "-webkit-box",
+				"-webkit-line-clamp": String(s.maxLines),
+				"-webkit-box-orient": "vertical",
+				overflow: "hidden",
+			});
+		else
+			Object.assign(css, {
+				"white-space": "nowrap",
+				overflow: "hidden",
+				"text-overflow": "ellipsis",
+			});
+	}
+
+	const st = sty(node, "text");
+	if (st && ctx.styles[st]) {
+		el.textStyle = ctx.styles[st].name;
+		if (!ctx.textStyles[el.textStyle]) {
+			const { color: _c, background: _b, ...font } = fontCss(s, []);
+			ctx.textStyles[el.textStyle] = font;
+		}
+	}
+
+	const chars = node.characters || "";
+	const ov = node.characterStyleOverrides || [];
+	const table = node.styleOverrideTable || {};
+	if (ov.some(Boolean)) {
+		const segs = [];
+		let start = 0;
+		for (let i = 1; i <= chars.length; i++) {
+			if (i < chars.length && (ov[i] || 0) === (ov[start] || 0)) continue;
+			const id = ov[start] || 0;
+			const seg = { text: chars.slice(start, i) };
+			if (id && table[id]) {
+				const t = table[id];
+				const diff = {};
+				const c2 = fontCss({ ...s, ...t }, t.fills || node.fills);
+				for (const [k, v] of Object.entries(c2)) if (css[k] !== v) diff[k] = v;
+				if (Object.keys(diff).length) seg.css = diff;
+			}
+			segs.push(seg);
+			start = i;
+		}
+		el.segments = segs;
+	} else {
+		el.text = chars.length > 300 ? chars.slice(0, 297) + "…" : chars;
+	}
+	return css;
+}
+
+function fontCss(s, fills) {
+	const bv = s.boundVariables || {};
+	const css = {};
+	if (s.fontFamily) {
+		const fam = `"${s.fontFamily}"`;
+		const n = varRef(bv.fontFamily);
+		css["font-family"] = n ? tokenize(n, fam) : fam;
+	}
+	if (s.fontWeight) css["font-weight"] = num(s.fontWeight, bv.fontWeight, "");
+	if (s.fontSize) css["font-size"] = num(s.fontSize, bv.fontSize);
+	if (s.lineHeightUnit === "PIXELS" && s.lineHeightPx)
+		css["line-height"] = num(s.lineHeightPx, bv.lineHeight);
+	else if (s.lineHeightUnit === "FONT_SIZE_%" && s.lineHeightPercentFontSize)
+		css["line-height"] = String(rd(s.lineHeightPercentFontSize / 100));
+	else css["line-height"] = "normal";
+	if (s.letterSpacing)
+		css["letter-spacing"] = num(s.letterSpacing, bv.letterSpacing);
+	if (s.italic) css["font-style"] = "italic";
+	const tc = {
+		UPPER: ["text-transform", "uppercase"],
+		LOWER: ["text-transform", "lowercase"],
+		TITLE: ["text-transform", "capitalize"],
+		SMALL_CAPS: ["font-variant", "small-caps"],
+		SMALL_CAPS_FORCED: ["font-variant", "all-small-caps"],
+	}[s.textCase];
+	if (tc) css[tc[0]] = tc[1];
+	const td = { UNDERLINE: "underline", STRIKETHROUGH: "line-through" }[
+		s.textDecoration
+	];
+	if (td) css["text-decoration"] = td;
+
+	const vis = visiblePaints(fills);
+	const solid = vis.find((p) => p.type === "SOLID");
+	const grad = vis.find((p) => p.type.startsWith("GRADIENT_"));
+	if (solid) css.color = solidCss(solid);
+	else if (grad)
+		Object.assign(css, {
+			background: gradientCss(grad, 1, 1),
+			"-webkit-background-clip": "text",
+			"background-clip": "text",
+			color: "transparent",
+		});
+	return css;
+}
+
+// ---------------------------------------------------------------- íconos
+// Un archivo por componente de ícono (incluida su variante) o por vector suelto.
+// La clave no puede ser el nombre: variantes de un set y capas "Vector" lo comparten.
+function iconFor(node) {
+	let key = node.id,
+		name = node.name;
+	if (node.type === "INSTANCE" && node.componentId) {
+		key = node.componentId;
+		const c = ctx.components[node.componentId];
+		name = componentName(node.componentId) || node.name;
+		if (c && c.componentSetId && ctx.componentSets[c.componentSetId])
+			name += ` ${c.name}`; // "Icon Type=Arrow" → icon-type-arrow.svg
+	}
+	let icon = ctx.icons.get(key);
+	if (!icon) {
+		let file = kebab(name) || "icon";
+		const n = (ctx.iconFiles.get(file) || 0) + 1;
+		ctx.iconFiles.set(file, n);
+		if (n > 1) file += `-${n}`;
+		const pal = vectorPalette(node);
+		icon = { name, id: node.id, file: `assets/icons/${file}.svg` };
+		if (pal && pal.size === 1) icon.hex = [...pal][0]; // color exportado, a reemplazar por currentColor
+		ctx.icons.set(key, icon);
+	}
+	return icon;
+}
+
+// Un registro por archivo: tras deduplicar, varios íconos pueden compartir el mismo.
+function iconList() {
+	const seen = new Set();
+	return [...ctx.icons.values()]
+		.filter((i) => !seen.has(i.file) && seen.add(i.file))
+		.map((i) => ({ name: i.name, file: i.file }));
+}
+
+// Colores (hex, sin alfa) de las pinturas visibles del ícono; null si hay degradados o imágenes.
+function vectorPalette(n, out = new Set()) {
+	if (n.visible === false) return out;
+	for (const p of [...visiblePaints(n.fills), ...visiblePaints(n.strokes)]) {
+		if (p.type !== "SOLID") return null;
+		out.add(color({ ...p.color, a: 1 }));
+	}
+	for (const c of n.children || []) if (!vectorPalette(c, out)) return null;
+	return out;
+}
+
+// Reemplaza el color del ícono en fill/stroke (atributo o style) por currentColor.
+// Figma exporta #FFFFFF y #000000 como "white" y "black".
+function toCurrentColor(svg, hex) {
+	const names = { "#FFFFFF": "white", "#000000": "black" };
+	const alt = [hex, names[hex]].filter(Boolean).join("|");
+	const re = new RegExp(
+		`((?:fill|stroke)\\s*(?:=\\s*["']|:\\s*))(?:${alt})(?![\\w-])`,
+		"gi",
+	);
+	return svg.replace(re, "$1currentColor");
+}
+
+function isVectorish(n) {
+	if (n.visible === false) return true;
+	if (VECTOR_TYPES.has(n.type) || n.type === "LINE") return true;
+	if (n.type === "TEXT") return false;
+	if (
+		(n.type === "ELLIPSE" || n.type === "RECTANGLE") &&
+		!(n.children || []).length
+	)
+		return !visiblePaints(n.fills).some((p) => p.type === "IMAGE");
+	const kids = n.children || [];
+	return kids.length > 0 && kids.every(isVectorish);
+}
+function hasTrueVector(n) {
+	return VECTOR_TYPES.has(n.type) || (n.children || []).some(hasTrueVector);
+}
+function isIconish(n) {
+	if (n.type === "TEXT" || !(n.children || []).length) return false;
+	const own =
+		[...visiblePaints(n.fills), ...visiblePaints(n.strokes)].length > 0;
+	return !own && n.children.every(isVectorish) && hasTrueVector(n);
+}
+function vectorColor(n) {
+	for (const list of [n.fills, n.strokes])
+		for (const p of visiblePaints(list))
+			if (p.type === "SOLID") return solidCss(p);
+	for (const c of n.children || []) {
+		if (c.visible === false) continue;
+		const x = vectorColor(c);
+		if (x) return x;
+	}
+	return null;
+}
+
+// ---------------------------------------------------------------- props
+function propName(key) {
+	return camel(String(key).replace(/#[^#]*$/, "")) || "prop";
+}
+function propType(t) {
+	return (
+		{
+			VARIANT: "variant",
+			BOOLEAN: "boolean",
+			TEXT: "string",
+			INSTANCE_SWAP: "node",
+			SLOT: "slot",
+		}[t] || String(t).toLowerCase()
+	);
+}
+
+function propsFromDefs(defs) {
+	const out = {};
+	for (const [k, d] of Object.entries(defs)) {
+		const p = { type: propType(d.type) };
+		if (d.type === "VARIANT") p.options = d.variantOptions || [];
+		if (d.type === "INSTANCE_SWAP")
+			p.default = pascal(componentName(d.defaultValue) || "") || d.defaultValue;
+		else if (d.defaultValue !== undefined && d.type !== "SLOT")
+			p.default = d.defaultValue;
+		out[propName(k)] = p;
+	}
+	return out;
+}
+
+function defaultVariant(defs) {
+	const out = {};
+	for (const [k, d] of Object.entries(defs))
+		if (d.type === "VARIANT") out[propName(k)] = d.defaultValue;
+	return out;
+}
+
+function parseVariantName(name) {
+	const out = {};
+	for (const part of String(name).split(",")) {
+		const i = part.indexOf("=");
+		if (i > 0)
+			out[propName(part.slice(0, i).trim())] = part.slice(i + 1).trim();
+	}
+	return out;
+}
+
+function displayValue(v) {
+	if (v.type === "INSTANCE_SWAP")
+		return pascal(componentName(v.value) || "") || v.value;
+	return v.value;
+}
+
+function componentName(id) {
+	const c = id && ctx.components[id];
+	if (!c) return null;
+	if (c.componentSetId && ctx.componentSets[c.componentSetId])
+		return ctx.componentSets[c.componentSetId].name;
+	return c.name;
+}
+
+// ---------------------------------------------------------------- tokens
+function sty(n, key) {
+	const s = n.styles || {};
+	return s[key] || s[key + "s"] || null;
+}
+
+function styleToken(id) {
+	const s = id && ctx.styles[id];
+	return s ? "--" + kebab(s.name) : null;
+}
+
+function varRef(alias) {
+	if (Array.isArray(alias)) alias = alias[0];
+	if (!alias || !alias.id) return null;
+	const v = ctx.variables[alias.id];
+	if (!v) {
+		ctx.unnamedVars = true;
+		return null;
+	}
+	const web = v.codeSyntax && v.codeSyntax.WEB;
+	const m = web && web.match(/--[A-Za-z0-9_-]+/);
+	return m ? m[0] : "--" + kebab(v.name);
+}
+
+function tokenize(name, fallback) {
+	ctx.tokens.set(name, fallback);
+	return `var(${name}, ${fallback})`;
+}
+
+function num(v, alias, unit = "px") {
+	const raw = v === 0 ? "0" : `${rd(v)}${unit}`;
+	const n = varRef(alias);
+	return n ? tokenize(n, raw) : raw;
+}
+
+// ---------------------------------------------------------------- salida
+function notes(subs) {
+	const n = [
+		"Unidades en px. Se asume `*, *::before, *::after { box-sizing: border-box; }`.",
+		'styles: clase CSS → declaraciones (CSS Modules). "root" es el elemento raíz de cada componente.',
+		"structure: árbol de elementos. tag es una sugerencia; className apunta a styles.",
+		"bind: visible → render condicional; text → contenido desde la prop; swap → prop de tipo ReactNode.",
+		'Elementos con "component": instancias de otro componente. En este módulo solo llevan estilos de ubicación (tamaño, flex), que se pasan vía className; sus estilos propios están en subcomponents. En el .module.css esa ubicación se emite como `.root .clase` para ganar sobre el `.root` del subcomponente.',
+		"var(--token, valor): el valor de Figma queda como fallback; tokens.css define todos.",
+	];
+	if (Object.keys(subs).length)
+		n.push(
+			"subcomponents: solo incluye las variantes que aparecen usadas dentro de este componente.",
+		);
+	if (
+		[ctx.rootComponent, ...Object.values(subs)].some(
+			(s) => s && s.variantStyles,
+		)
+	)
+		n.push(
+			'variantStyles: estilos que cambian por variante; se aplican con data-atributos en root, p. ej. <div className={styles.root} data-size="Large">.',
+		);
+	if (ctx.icons.size)
+		n.push(
+			'Íconos: los monocromos usan currentColor en el SVG (con --assets) y su color se define con `color` en CSS; solo funciona si el SVG va inline (p. ej. SVGR), no con <img>. Los marcados "multicolor" conservan sus colores.',
+		);
+	if (ctx.unnamedVars)
+		n.push(
+			"Hay valores enlazados a variables cuyo nombre no se pudo leer (la API de variables requiere plan Enterprise); se usan los valores directos.",
+		);
+	return n.concat([...ctx.notes]);
+}
+
+// JSON legible pero compacto: los objetos cortos van en una sola línea
+function compactJson(v, indent = "") {
+	const flat = JSON.stringify(v);
+	if (flat === undefined) return "null";
+	if (typeof v !== "object" || v === null || flat.length + indent.length <= 110)
+		return flat;
+	const next = indent + "  ";
+	if (Array.isArray(v))
+		return `[\n${v.map((x) => next + compactJson(x, next)).join(",\n")}\n${indent}]`;
+	const items = Object.entries(v)
+		.filter(([, x]) => x !== undefined)
+		.map(([k, x]) => `${next}${JSON.stringify(k)}: ${compactJson(x, next)}`);
+	return `{\n${items.join(",\n")}\n${indent}}`;
+}
+
+function rule(sel, decl) {
+	return `${sel} {\n${Object.entries(decl)
+		.map(([k, v]) => `  ${k}: ${v};`)
+		.join("\n")}\n}\n`;
+}
+
+// Especificidad: todo lo que aplica a .root queda en (0,1,0) gracias a :where(), así la ubicación
+// de una instancia en el módulo padre (.root .clase, 0,2,0) siempre gana sobre el .root del hijo,
+// sin depender del orden en que se cargan los CSS.
+function moduleCss(comp) {
+	const out = [`/* ${comp.figmaName} — generado desde Figma */\n`];
+	const inst = ctx.instanceClasses.get(comp) || new Set();
+	for (const [cls, decl] of Object.entries(comp.styles || {}))
+		out.push(rule(inst.has(cls) ? `.root .${cls}` : `.${cls}`, decl));
+	for (const r of comp.variantStyles || []) {
+		const attrs = `:where(${Object.entries(r.when)
+			.map(([k, v]) => `[data-${kebab(k)}="${String(v).replace(/"/g, '\\"')}"]`)
+			.join("")})`;
+		out.push(
+			`/* ${Object.entries(r.when)
+				.map(([k, v]) => `${k}=${v}`)
+				.join(", ")} */\n`,
+		);
+		for (const [cls, decl] of Object.entries(r.styles)) {
+			out.push(
+				rule(cls === "root" ? `.root${attrs}` : `.root${attrs} .${cls}`, decl),
+			);
+		}
+	}
+	return out.join("\n");
+}
+
+function tokensCss() {
+	const lines = [...ctx.tokens]
+		.sort((a, b) => a[0].localeCompare(b[0]))
+		.map(([k, v]) => `  ${k}: ${v};`);
+	return `/* Tokens usados por el componente (valores tomados de Figma) */\n:root {\n${lines.join("\n")}\n}\n`;
+}
+
+function fixImagePaths(s, rename) {
+	return s.replace(
+		/assets\/images\/([A-Za-z0-9]+)(?![.\w])/g,
+		(m, ref) => rename[ref] || `${m}.png`,
+	);
+}
+
+function fixIconPaths(s, rename) {
+	const files = Object.keys(rename);
+	if (!files.length) return s;
+	const esc = files.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+	return s.replace(new RegExp(esc.join("|"), "g"), (m) => rename[m]);
+}
+
+// ---------------------------------------------------------------- descargas
+async function downloadAssets(token, outDir) {
+	const rename = {}; // imageRef → ruta con extensión
+	const iconRename = {}; // archivo duplicado → archivo con el mismo contenido
+	if (ctx.icons.size) {
+		try {
+			const ids = [...new Set([...ctx.icons.values()].map((i) => i.id))];
+			const r = await api(
+				`/images/${ctx.fileKey}?ids=${encodeURIComponent(ids.join(","))}&format=svg`,
+				token,
+			);
+			fs.mkdirSync(path.join(outDir, "assets/icons"), { recursive: true });
+			// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
+			// (ya con currentColor, así que el color tampoco las separa).
+			const byContent = new Map();
+			for (const icon of ctx.icons.values()) {
+				const url = r.images && r.images[icon.id];
+				if (!url) continue;
+				let svg = await (await fetch(url)).text();
+				if (icon.hex) svg = toCurrentColor(svg, icon.hex);
+				const same = byContent.get(svg);
+				if (same) {
+					iconRename[icon.file] = same;
+					icon.file = same;
+					continue;
+				}
+				byContent.set(svg, icon.file);
+				fs.writeFileSync(path.join(outDir, icon.file), svg);
+			}
+		} catch (e) {
+			console.error(`✖ No se pudieron descargar los íconos: ${e.message}`);
+		}
+	}
+	if (ctx.imageRefs.size) {
+		try {
+			const r = await api(`/files/${ctx.fileKey}/images`, token);
+			const urls = (r.meta && r.meta.images) || {};
+			fs.mkdirSync(path.join(outDir, "assets/images"), { recursive: true });
+			for (const ref of ctx.imageRefs) {
+				if (!urls[ref]) continue;
+				const res = await fetch(urls[ref]);
+				const ct = res.headers.get("content-type") || "";
+				const ext = ct.includes("jpeg")
+					? ".jpg"
+					: ct.includes("gif")
+						? ".gif"
+						: ct.includes("webp")
+							? ".webp"
+							: ".png";
+				fs.writeFileSync(
+					path.join(outDir, "assets/images", ref + ext),
+					Buffer.from(await res.arrayBuffer()),
+				);
+				rename[ref] = `assets/images/${ref}${ext}`;
+			}
+		} catch (e) {
+			console.error(`✖ No se pudieron descargar las imágenes: ${e.message}`);
+		}
+	}
+	return { images: rename, icons: iconRename };
+}
+
+async function downloadPng(token, nodeId, outDir) {
+	try {
+		const r = await api(
+			`/images/${ctx.fileKey}?ids=${encodeURIComponent(nodeId)}&format=png&scale=1`,
+			token,
+		);
+		const url = r.images && r.images[nodeId];
+		if (!url) return false;
+		const img = await fetch(url);
+		fs.writeFileSync(
+			path.join(outDir, "preview.png"),
+			Buffer.from(await img.arrayBuffer()),
+		);
+		return true;
+	} catch (e) {
+		console.error(`✖ No se pudo descargar el PNG: ${e.message}`);
+		return false;
+	}
+}
+
+// ---------------------------------------------------------------- utilidades
+function parseFigmaUrl(u) {
+	let url;
+	try {
+		url = new URL(u);
+	} catch {
+		fail("El link no es una URL válida.");
+	}
+	const m = url.pathname.match(/\/(?:design|file|proto)\/([a-zA-Z0-9]+)/);
+	if (!m)
+		fail(
+			"No reconozco el link. Debe ser del tipo figma.com/design/<KEY>/...?node-id=...",
+		);
+	const branch = url.pathname.match(/\/branch\/([a-zA-Z0-9]+)/);
+	const nodeParam = url.searchParams.get("node-id");
+	if (!nodeParam)
+		fail(
+			"El link no tiene node-id. En Figma: clic derecho sobre el componente → Copy/Paste as → Copy link to selection.",
+		);
+	return {
+		fileKey: branch ? branch[1] : m[1],
+		nodeId: decodeURIComponent(nodeParam).replace(/-/g, ":"),
+	};
+}
+
+async function api(p, token) {
+	let res;
+	try {
+		res = await fetch(API + p, { headers: { "X-Figma-Token": token } });
+	} catch (e) {
+		throw new Error(
+			`No se pudo conectar con api.figma.com (${(e.cause && e.cause.code) || e.message}). Revisa tu conexión o proxy.`,
+		);
+	}
+	if (res.ok) return res.json();
+	const body = (await res.text()).slice(0, 300);
+	const hints = {
+		400: "Petición inválida; revisa el node-id del link.",
+		403: 'Token inválido o vencido, sin el scope "File content: read", sin acceso al archivo, o tu organización bloquea los tokens personales.',
+		404: "Archivo o nodo no encontrado. Revisa el link.",
+		429: "Límite de peticiones de Figma alcanzado; espera un minuto y reintenta.",
+	};
+	throw new Error(`Figma API ${res.status}: ${hints[res.status] || body}`);
+}
+
+// Una clase por ruta de capas (no por orden de recorrido): una capa extra en una variante
+// no corre la numeración del resto.
+function classFor(name, path, reg) {
+	let cls = reg.byPath.get(path);
+	if (cls) return cls;
+	let base = camel(name) || "el";
+	if (/^[0-9]/.test(base)) base = "el" + base;
+	if (base === "root") base = "rootEl";
+	cls = base;
+	for (let n = 2; reg.taken.has(cls); n++) cls = `${base}${n}`;
+	reg.taken.add(cls);
+	reg.byPath.set(path, cls);
+	return cls;
+}
+
+function words(s) {
+	return String(s)
+		.normalize("NFD")
+		.replace(/[̀-ͯ]/g, "")
+		.split(/[^A-Za-z0-9]+/)
+		.filter(Boolean);
+}
+function camel(s) {
+	return words(s)
+		.map((w, i) => (i ? w[0].toUpperCase() : w[0].toLowerCase()) + w.slice(1))
+		.join("");
+}
+function pascal(s) {
+	const c = camel(s);
+	return c ? c[0].toUpperCase() + c.slice(1) : "";
+}
+function kebab(s) {
+	return words(s).join("-").toLowerCase();
+}
+
+function color(c, opacity = 1) {
+	if (!c) return "currentColor";
+	const a = (c.a == null ? 1 : c.a) * opacity;
+	const [r, g, b] = [c.r, c.g, c.b].map((v) => Math.round(v * 255));
+	if (a >= 0.999)
+		return (
+			"#" +
+			[r, g, b]
+				.map((v) => v.toString(16).padStart(2, "0"))
+				.join("")
+				.toUpperCase()
+		);
+	return `rgba(${r}, ${g}, ${b}, ${rd(a)})`;
+}
+
+function rd(n) {
+	return Math.round(n * 100) / 100;
+}
+function px(n) {
+	return n === 0 ? "0" : `${rd(n)}px`;
+}
+
+function printHelp() {
+	console.log(`Uso: node extractor.js ["<link de Figma>"] [--assets] [--png] [--shallow] [--no-css] [--out-dir dir]
+       node extractor.js --from respuesta.json
+
+Variables (.env o entorno): FIGMA_TOKEN (obligatoria), FIGMA_LINK, FIGMA_OUT_DIR,
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false).
+Los parámetros anulan al .env; --no-assets, --no-png, --no-shallow y --css desactivan/activan lo definido allí.`);
+}
+
+function fail(msg) {
+	console.error("✖ " + msg);
+	process.exit(1);
+}
+
+main().catch((e) => fail(e.message));

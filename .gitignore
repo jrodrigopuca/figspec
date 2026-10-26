@@ -1,0 +1,10 @@
+# Secretos: el token de Figma vive aquí
+.env
+.env.*
+!.env.example
+
+# Salida generada por el extractor (carpeta por defecto: figma-<componente>/)
+figma-*/
+
+node_modules/
+.DS_Store
