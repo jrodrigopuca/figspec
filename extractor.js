@@ -20,10 +20,17 @@
  *   --no-css          Solo genera component.json.                             FIGMA_CSS=false
  *   --out-dir <dir>   Carpeta de salida (por defecto: figma-<componente>/).   FIGMA_OUT_DIR
  *   --no-assets, --no-png, --no-shallow, --css   Anulan lo definido en el .env.
+ *   --offline         Modo de pruebas: solo usa la caché, nunca la red ni el token. FIGMA_OFFLINE=true
+ *   --online          Anula FIGMA_OFFLINE del .env.
+ *   --refresh         Vuelve a pedir todo a Figma: si la petición funciona, borra la caché del archivo
+ *                     y los archivos que el extractor generó antes en la salida (.figspec-manifest.json).
  *   --from <archivo>  Procesa una respuesta guardada de /v1/files/:key/nodes (sin red; solo parámetro).
  *
+ * Caché: lo que consume cuota de la API (nodes, variables, íconos, imágenes, vista previa) se guarda
+ * en FIGMA_CACHE_DIR (por defecto .figspec-cache/) y se reutiliza en las siguientes ejecuciones.
+ *
  * El token se lee siempre de FIGMA_TOKEN (nunca por parámetro).
- * FIGMA_MAX_WAIT (segundos, 60 por defecto): espera máxima aceptada al reintentar tras un 429.
+ * FIGMA_MAX_WAIT (segundos, 60 por defecto): espera máxima aceptada al reintentar tras un 429; 0 = sin reintentos.
  */
 "use strict";
 
@@ -78,6 +85,8 @@ const opts = {
 	assets: envFlag("FIGMA_ASSETS", false),
 	png: envFlag("FIGMA_PNG", false),
 	shallow: envFlag("FIGMA_SHALLOW", false),
+	offline: envFlag("FIGMA_OFFLINE", false),
+	refresh: false,
 };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -90,6 +99,9 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-shallow") opts.shallow = false;
 	else if (a === "--css") opts.css = true;
 	else if (a === "--no-css") opts.css = false;
+	else if (a === "--offline") opts.offline = true;
+	else if (a === "--online") opts.offline = false;
+	else if (a === "--refresh") opts.refresh = true;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
 	else if (a === "-h" || a === "--help") {
@@ -98,6 +110,8 @@ for (let i = 0; i < argv.length; i++) {
 	} else if (!a.startsWith("--")) opts.url = a;
 	else fail(`Opción desconocida: ${a}`);
 }
+if (opts.offline && opts.refresh)
+	fail("--refresh pide datos nuevos a Figma y --offline lo impide: usa solo uno.");
 
 function envFlag(name, def) {
 	const v = (process.env[name] || "").trim();
@@ -123,6 +137,9 @@ const ctx = {
 	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
 	imageRefs: new Set(),
 	notes: new Set(),
+	generated: new Set(), // archivos escritos en la carpeta de salida (rutas relativas)
+	requests: 0, // peticiones a la API de Figma (las de la caché no cuentan)
+	cacheHits: 0,
 };
 
 // ---------------------------------------------------------------- main
@@ -142,31 +159,52 @@ async function main() {
 			);
 		}
 		if (typeof fetch !== "function") fail("Necesitas Node 18 o superior.");
-		token = process.env.FIGMA_TOKEN;
-		if (!token)
-			fail(
-				"Falta FIGMA_TOKEN. Crea un archivo .env con la línea FIGMA_TOKEN=figd_... (token en Figma: Settings → Security → Personal access tokens).",
-			);
+		token = process.env.FIGMA_TOKEN; // se exige recién al hacer una petición (ver api)
 		let fileKey;
 		({ fileKey, nodeId } = parseFigmaUrl(opts.url));
 		ctx.fileKey = fileKey;
-		data = await api(
-			`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`,
-			token,
-		);
-		try {
-			// Solo para miembros full de organizaciones Enterprise (scope file_variables:read).
-			const v = await api(`/files/${fileKey}/variables/local`, token);
-			for (const variable of Object.values(
-				(v.meta && v.meta.variables) || {},
-			)) {
-				ctx.variables[variable.id] = variable;
-				if (variable.subscribed_id)
-					ctx.variables[variable.subscribed_id] = variable;
+
+		const nodesRel = `${fileKey}/${safeId(nodeId)}.nodes.json`;
+		const saved = readCache(nodesRel);
+		if (saved !== undefined) {
+			data = JSON.parse(saved);
+			const when = fs.statSync(cachePath(nodesRel)).mtime;
+			console.error(
+				`↺ Respuesta guardada del ${when.toLocaleString()} (${cachePath(nodesRel)}).${opts.offline ? "" : " Usa --refresh para pedirla de nuevo."}`,
+			);
+		} else if (opts.offline) {
+			fail(
+				`Modo offline: no hay respuesta guardada para el nodo ${nodeId} (${cachePath(nodesRel)}). Ejecuta una vez sin --offline para guardarla.`,
+			);
+		} else {
+			data = await api(
+				`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`,
+				token,
+			);
+			// --refresh borra la caché recién ahora: si la petición fallara (p. ej. un 429 de
+			// varios días) se conserva la anterior y se puede seguir trabajando con --offline.
+			if (opts.refresh) {
+				fs.rmSync(cachePath(fileKey), { recursive: true, force: true });
+				console.error(`↻ --refresh: caché borrada (${cachePath(fileKey)}).`);
 			}
-		} catch {
-			/* sin nombres de variables: se usan los valores */
+			writeCache(nodesRel, JSON.stringify(data));
 		}
+
+		// Solo funciona en Enterprise (scope file_variables:read). El resultado, o el error, se
+		// guarda para no gastar una petición en cada ejecución; un 429 no se guarda.
+		const varsRel = `${fileKey}/variables.json`;
+		let v = readCache(varsRel);
+		v = v === undefined ? undefined : JSON.parse(v);
+		if (v === undefined && !opts.offline) {
+			try {
+				v = await api(`/files/${fileKey}/variables/local`, token);
+			} catch (e) {
+				v = e.status === 429 ? null : { error: e.message };
+			}
+			if (v) writeCache(varsRel, JSON.stringify(v));
+		}
+		for (const variable of Object.values((v && v.meta && v.meta.variables) || {}))
+			ctx.variables[variable.id] = variable;
 	}
 
 	const entry = data.nodes && data.nodes[nodeId];
@@ -204,9 +242,11 @@ async function main() {
 	const outDir =
 		opts.outDir || `figma-${kebab(component.name) || "componente"}`;
 	fs.mkdirSync(outDir, { recursive: true });
+	if (opts.refresh) cleanOutput(outDir);
 
 	let rename = { images: {}, icons: {} };
-	if (opts.assets && token) rename = await downloadAssets(token, outDir);
+	const remote = !opts.from; // con --from no hay archivo de Figma del que bajar assets
+	if (opts.assets && remote) rename = await downloadAssets(token, outDir);
 	if (result.icons) result.icons = iconList(); // tras deduplicar por contenido
 	const fix = (s) =>
 		fixIconPaths(fixImagePaths(s, rename.images), rename.icons);
@@ -214,6 +254,7 @@ async function main() {
 	const files = [];
 	const write = (name, content) => {
 		fs.writeFileSync(path.join(outDir, name), fix(content));
+		ctx.generated.add(name);
 		files.push(name);
 	};
 	const json = compactJson(result);
@@ -224,13 +265,118 @@ async function main() {
 			write(`${sub.name}.module.css`, moduleCss(sub));
 		if (ctx.tokens.size) write("tokens.css", tokensCss());
 	}
-	if (opts.png && token) {
-		if (await downloadPng(token, nodeId, outDir)) files.push("preview.png");
+	if (opts.png && remote) {
+		if (await downloadPng(token, nodeId, outDir)) {
+			ctx.generated.add("preview.png");
+			files.push("preview.png");
+		}
 	}
+	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
 	for (const f of files) console.error(`   ${f}`);
 	console.error(`  component.json ≈ ${Math.ceil(json.length / 4)} tokens`);
+	if (remote)
+		console.error(
+			`  Figma API: ${ctx.requests} ${ctx.requests === 1 ? "petición" : "peticiones"} · caché: ${ctx.cacheHits} ${ctx.cacheHits === 1 ? "archivo reutilizado" : "archivos reutilizados"}`,
+		);
+}
+
+// ---------------------------------------------------------------- manifiesto de salida
+// Lista de archivos que generó el extractor en la carpeta de salida. --refresh borra solo esos:
+// la carpeta puede ser parte de un proyecto (p. ej. src/components) y no se toca nada más.
+const MANIFEST = ".figspec-manifest.json";
+
+function readManifest(outDir) {
+	try {
+		return JSON.parse(fs.readFileSync(path.join(outDir, MANIFEST), "utf8")).files || [];
+	} catch {
+		return [];
+	}
+}
+
+// Une lo generado ahora con lo anterior: un archivo que dejó de generarse sigue registrado
+// hasta el próximo --refresh, que es quien lo borra.
+function writeManifest(outDir) {
+	const files = [...new Set([...readManifest(outDir), ...ctx.generated])].sort();
+	fs.writeFileSync(
+		path.join(outDir, MANIFEST),
+		JSON.stringify({ generatedBy: "figspec", files }, null, 2) + "\n",
+	);
+}
+
+function cleanOutput(outDir) {
+	const root = path.resolve(outDir);
+	let removed = 0;
+	for (const rel of readManifest(outDir)) {
+		const file = path.resolve(root, rel);
+		if (!file.startsWith(root + path.sep)) continue; // nunca fuera de la carpeta de salida
+		if (fs.existsSync(file)) {
+			fs.rmSync(file, { force: true });
+			removed++;
+		}
+	}
+	for (const dir of ["assets/icons", "assets/images", "assets"])
+		try {
+			fs.rmdirSync(path.join(root, dir)); // solo si quedó vacía
+		} catch {
+			/* no existe o tiene otros archivos */
+		}
+	fs.rmSync(path.join(root, MANIFEST), { force: true });
+	if (removed)
+		console.error(`↻ --refresh: ${removed} archivo(s) generados antes, borrados de ${outDir}/.`);
+}
+
+// ---------------------------------------------------------------- caché
+// Todo lo que consume cuota de la API se guarda en FIGMA_CACHE_DIR (por defecto .figspec-cache/):
+// respuesta de nodes, variables, SVG de íconos, imágenes y vista previa.
+// --refresh lo ignora y lo vuelve a pedir; --offline solo usa la caché y nunca la red.
+function cachePath(rel) {
+	return path.join(process.env.FIGMA_CACHE_DIR || ".figspec-cache", rel);
+}
+
+// undefined si no está (o si se pidió --refresh). encoding null → Buffer.
+function readCache(rel, encoding = "utf8") {
+	if (opts.refresh) return undefined;
+	try {
+		const content = fs.readFileSync(cachePath(rel), encoding);
+		ctx.cacheHits++;
+		return content;
+	} catch {
+		return undefined;
+	}
+}
+
+function writeCache(rel, content) {
+	const file = cachePath(rel);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, content);
+}
+
+// ids → Buffer: lee de la caché lo que haya y pide a Figma (fetchMissing) solo lo que falte.
+async function cachedAssets(kind, ext, ids, fetchMissing) {
+	const rel = (id) => `${ctx.fileKey}/${kind}/${safeId(id)}${ext}`;
+	const out = new Map();
+	const missing = [];
+	for (const id of ids) {
+		const buf = readCache(rel(id), null);
+		if (buf !== undefined) out.set(id, buf);
+		else missing.push(id);
+	}
+	if (missing.length && opts.offline)
+		console.error(
+			`… Modo offline: faltan ${missing.length} archivo(s) de ${kind} en la caché; se omiten.`,
+		);
+	else if (missing.length)
+		for (const [id, buf] of await fetchMissing(missing)) {
+			writeCache(rel(id), buf);
+			out.set(id, buf);
+		}
+	return out;
+}
+
+function safeId(id) {
+	return String(id).replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 // ---------------------------------------------------------------- componentes y variantes
@@ -1466,18 +1612,22 @@ async function downloadAssets(token, outDir) {
 	if (ctx.icons.size) {
 		try {
 			const ids = [...new Set([...ctx.icons.values()].map((i) => i.id))];
-			const r = await api(
-				`/images/${ctx.fileKey}?ids=${encodeURIComponent(ids.join(","))}&format=svg`,
-				token,
-			);
+			// En caché se guarda el SVG original (antes de currentColor)
+			const raw = await cachedAssets("icons", ".svg", ids, async (missing) => {
+				const r = await api(
+					`/images/${ctx.fileKey}?ids=${encodeURIComponent(missing.join(","))}&format=svg`,
+					token,
+				);
+				return fetchAll(missing, (id) => r.images && r.images[id]);
+			});
 			fs.mkdirSync(path.join(outDir, "assets/icons"), { recursive: true });
 			// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
 			// (ya con currentColor, así que el color tampoco las separa).
 			const byContent = new Map();
 			for (const icon of ctx.icons.values()) {
-				const url = r.images && r.images[icon.id];
-				if (!url) continue;
-				let svg = await (await fetch(url)).text();
+				const buf = raw.get(icon.id);
+				if (!buf) continue;
+				let svg = buf.toString("utf8");
 				if (icon.hex) svg = toCurrentColor(svg, icon.hex);
 				const same = byContent.get(svg);
 				if (same) {
@@ -1487,6 +1637,7 @@ async function downloadAssets(token, outDir) {
 				}
 				byContent.set(svg, icon.file);
 				fs.writeFileSync(path.join(outDir, icon.file), svg);
+				ctx.generated.add(icon.file);
 			}
 		} catch (e) {
 			console.error(`✖ No se pudieron descargar los íconos: ${e.message}`);
@@ -1494,25 +1645,17 @@ async function downloadAssets(token, outDir) {
 	}
 	if (ctx.imageRefs.size) {
 		try {
-			const r = await api(`/files/${ctx.fileKey}/images`, token);
-			const urls = (r.meta && r.meta.images) || {};
+			const bufs = await cachedAssets("images", "", [...ctx.imageRefs], async (missing) => {
+				const r = await api(`/files/${ctx.fileKey}/images`, token);
+				const urls = (r.meta && r.meta.images) || {};
+				return fetchAll(missing, (ref) => urls[ref]);
+			});
 			fs.mkdirSync(path.join(outDir, "assets/images"), { recursive: true });
-			for (const ref of ctx.imageRefs) {
-				if (!urls[ref]) continue;
-				const res = await fetch(urls[ref]);
-				const ct = res.headers.get("content-type") || "";
-				const ext = ct.includes("jpeg")
-					? ".jpg"
-					: ct.includes("gif")
-						? ".gif"
-						: ct.includes("webp")
-							? ".webp"
-							: ".png";
-				fs.writeFileSync(
-					path.join(outDir, "assets/images", ref + ext),
-					Buffer.from(await res.arrayBuffer()),
-				);
+			for (const [ref, buf] of bufs) {
+				const ext = imageExt(buf);
+				fs.writeFileSync(path.join(outDir, "assets/images", ref + ext), buf);
 				rename[ref] = `assets/images/${ref}${ext}`;
+				ctx.generated.add(rename[ref]);
 			}
 		} catch (e) {
 			console.error(`✖ No se pudieron descargar las imágenes: ${e.message}`);
@@ -1523,22 +1666,42 @@ async function downloadAssets(token, outDir) {
 
 async function downloadPng(token, nodeId, outDir) {
 	try {
-		const r = await api(
-			`/images/${ctx.fileKey}?ids=${encodeURIComponent(nodeId)}&format=png&scale=1`,
-			token,
-		);
-		const url = r.images && r.images[nodeId];
-		if (!url) return false;
-		const img = await fetch(url);
-		fs.writeFileSync(
-			path.join(outDir, "preview.png"),
-			Buffer.from(await img.arrayBuffer()),
-		);
+		const bufs = await cachedAssets("preview", ".png", [nodeId], async () => {
+			const r = await api(
+				`/images/${ctx.fileKey}?ids=${encodeURIComponent(nodeId)}&format=png&scale=1`,
+				token,
+			);
+			return fetchAll([nodeId], (id) => r.images && r.images[id]);
+		});
+		const buf = bufs.get(nodeId);
+		if (!buf) return false;
+		fs.writeFileSync(path.join(outDir, "preview.png"), buf);
 		return true;
 	} catch (e) {
 		console.error(`✖ No se pudo descargar el PNG: ${e.message}`);
 		return false;
 	}
+}
+
+// Descarga los archivos (URLs temporales de Figma, fuera de la API: no consumen cuota).
+async function fetchAll(ids, urlOf) {
+	const out = new Map();
+	for (const id of ids) {
+		const url = urlOf(id);
+		if (!url) continue;
+		const res = await fetch(url);
+		if (!res.ok) throw new Error(`descarga ${res.status} (${id})`);
+		out.set(id, Buffer.from(await res.arrayBuffer()));
+	}
+	return out;
+}
+
+// Extensión según el contenido (en caché las imágenes se guardan sin extensión)
+function imageExt(buf) {
+	if (buf[0] === 0xff && buf[1] === 0xd8) return ".jpg";
+	if (buf.toString("ascii", 0, 3) === "GIF") return ".gif";
+	if (buf.toString("ascii", 8, 12) === "WEBP") return ".webp";
+	return ".png";
 }
 
 // ---------------------------------------------------------------- utilidades
@@ -1571,10 +1734,17 @@ function parseFigmaUrl(u) {
 const MAX_RETRIES = 3;
 
 async function api(p, token) {
-	const maxWait = Number(process.env.FIGMA_MAX_WAIT) || 60;
+	if (opts.offline) throw new Error(`Modo offline: no se consulta Figma (${p}).`);
+	if (!token)
+		throw new Error(
+			"Falta FIGMA_TOKEN. Crea un archivo .env con la línea FIGMA_TOKEN=figd_... (token en Figma: Settings → Security → Personal access tokens).",
+		);
+	const mw = Number(process.env.FIGMA_MAX_WAIT);
+	const maxWait = process.env.FIGMA_MAX_WAIT && mw >= 0 ? mw : 60; // 0 = sin reintentos
 	for (let attempt = 0; ; attempt++) {
 		let res;
 		try {
+			ctx.requests++;
 			res = await fetch(API + p, { headers: { "X-Figma-Token": token } });
 		} catch (e) {
 			throw new Error(
@@ -1603,7 +1773,11 @@ async function api(p, token) {
 					? `Límite de peticiones de Figma alcanzado; Figma pide esperar ${duration(wait)} (más que FIGMA_MAX_WAIT=${maxWait}s).`
 					: `Límite de peticiones de Figma alcanzado tras ${MAX_RETRIES} reintentos; espera unos minutos.`,
 		};
-		throw new Error(`Figma API ${res.status}: ${hints[res.status] || body}`);
+		const err = new Error(
+			`Figma API ${res.status}: ${hints[res.status] || body}`,
+		);
+		err.status = res.status;
+		throw err;
 	}
 }
 
@@ -1686,7 +1860,11 @@ function printHelp() {
 
 Variables (.env o entorno): FIGMA_TOKEN (obligatoria), FIGMA_LINK, FIGMA_OUT_DIR,
   FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false),
-  FIGMA_MAX_WAIT (segundos máximos de espera al reintentar tras un 429; 60 por defecto).
+  FIGMA_MAX_WAIT (segundos máximos de espera al reintentar tras un 429; 60 por defecto; 0 = sin reintentos),
+  FIGMA_OFFLINE (true: solo caché), FIGMA_CACHE_DIR (por defecto .figspec-cache).
+Caché: las respuestas de Figma se guardan y se reutilizan; --refresh pide todo de nuevo y limpia
+  caché y salida anterior (solo lo generado por el extractor),
+  --offline (modo de pruebas) nunca usa la red.
 Los parámetros anulan al .env; --no-assets, --no-png, --no-shallow y --css desactivan/activan lo definido allí.`);
 }
 

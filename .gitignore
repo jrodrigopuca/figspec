@@ -6,5 +6,8 @@
 # Salida generada por el extractor (carpeta por defecto: figma-<componente>/)
 figma-*/
 
+# Respuestas de Figma guardadas (pueden incluir diseños privados)
+.figspec-cache/
+
 node_modules/
 .DS_Store

@@ -66,7 +66,14 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   cabecera: 2 · 4 · 8 s). Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto) falla
   enseguida diciendo cuánto esperar. Probado con 7 escenarios simulados.
 
-- [ ] **12. (P1) Cada ejecución gasta varias peticiones de una cuota que puede ser muy baja.**
+- [~] **12. (P1) Cada ejecución gasta varias peticiones de una cuota que puede ser muy baja.**
+  _Hecho:_ caché en `.figspec-cache/` (nodes, variables —incluido el error, para no repetir un 403—,
+  SVG originales, imágenes, vista previa). Solo se pide lo que falta; `--refresh` vuelve a pedir todo;
+  `--offline` / `FIGMA_OFFLINE` es el modo de pruebas (sin red ni token). Al final se muestra cuántas
+  peticiones se hicieron. Probado con 9 escenarios con un Figma simulado.
+  _Pendiente:_ leer `X-Figma-Plan-Tier` / `X-Figma-Rate-Limit-Type` del 429 para explicar el motivo.
+  (Pedir variables solo con opt-in deja de ser necesario: ahora se piden una sola vez por archivo.)
+  _Contexto:_
   En la prueba real Figma pidió esperar **110 h** tras unas pocas ejecuciones: es el nivel más bajo
   de límites (plan Starter o asientos View/Collab, con cuotas de pocas peticiones al mes en algunos
   endpoints). Una ejecución con `--assets --png` hace hasta 5 peticiones: `nodes`, `variables/local`
@@ -101,7 +108,7 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
 
 - [x] Encabezado y `printHelp` dicen `figma-extract.js`; el archivo es `extractor.js`.
 - [ ] `--assets` / `--png` se ignoran en silencio con `--from`: avisar.
-- [ ] `subscribed_id` no existe en `/variables/local`; quitar ese bloque.
+- [x] `subscribed_id` no existe en `/variables/local`; quitar ese bloque.
 - [ ] `/images?ids=…` con muchos íconos puede exceder el largo de URL: pedir en tandas.
 - [ ] Documentar aproximaciones en `notes`: `rotate` en hijos absolutos, `INNER_SHADOW` en texto
   (sale como `text-shadow` sin `inset`).

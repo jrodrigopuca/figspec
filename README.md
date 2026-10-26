@@ -36,9 +36,20 @@ node extractor.js "<link>" --assets    # link por parámetro + descarga de ícon
 | `--png` / `--no-png` | `FIGMA_PNG` | Descarga `preview.png` |
 | `--shallow` / `--no-shallow` | `FIGMA_SHALLOW` | No describe los subcomponentes, solo cómo se usan |
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
+| `--offline` / `--online` | `FIGMA_OFFLINE` | Modo de pruebas: solo usa la caché, nunca la red ni el token |
+| `--refresh` | — | Vuelve a pedir todo y limpia la caché del archivo y la salida anterior |
+| — | `FIGMA_CACHE_DIR` | Carpeta de la caché (por defecto `.figspec-cache/`) |
+| — | `FIGMA_MAX_WAIT` | Espera máxima (s) al reintentar tras un 429 (por defecto 60; `0` desactiva los reintentos) |
 | `--from <archivo>` | — | Procesa una respuesta guardada de `/v1/files/:key/nodes` (sin red) |
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto.
+
+### Caché y cuota de la API
+
+Figma limita las peticiones según el plan y el tipo de asiento; en los niveles más bajos la cuota es de pocas peticiones al mes. Por eso todo lo que consume cuota (respuesta del nodo, variables, íconos, imágenes y vista previa) se guarda en `.figspec-cache/` y se reutiliza: la segunda ejecución sobre el mismo nodo no hace peticiones. Al terminar se muestra cuántas se hicieron.
+
+- `--refresh`: el diseño cambió en Figma y quieres la versión nueva. Pide todo de nuevo y, solo si la petición funciona, borra la caché de ese archivo y los archivos que el extractor generó antes (registrados en `.figspec-manifest.json` dentro de la carpeta de salida; nada más se toca).
+- `--offline`: modo de pruebas; trabaja solo con lo guardado (no necesita token).
 
 Si Figma limita las peticiones (429), se reintenta hasta 3 veces esperando lo que indica `Retry-After`. Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto), el extractor se detiene y dice cuánto hay que esperar.
 
