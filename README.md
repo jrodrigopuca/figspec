@@ -25,6 +25,18 @@ Selecciona el componente, ejecuta **figspec export** y pulsa **Exportar**. Se de
 node extractor.js figspec-<nombre>.json
 ```
 
+```
+figma-menu/                  carpeta de salida
+  component.json             especificación (referencia, para un LLM)
+  tokens.css                 tokens globales (opcional)
+  preview.png                vista previa
+  Menu/                      el componente: se copia tal cual a tu proyecto
+    Menu.module.css          CSS Module de la raíz
+    Badge.module.css         … y de cada subcomponente
+    assets/icons/*.svg       íconos e imágenes
+    Menu.tsx, Badge.tsx, icons.tsx, index.ts   (con --react)
+```
+
 | Parámetro | Variable en `.env` | Efecto |
 |---|---|---|
 | `<archivo>` (o `--from <archivo>`) | `FIGMA_FROM` | Paquete exportado con el plugin |
@@ -33,12 +45,32 @@ node extractor.js figspec-<nombre>.json
 | `--no-png` / `--png` | `FIGMA_PNG` | Escribe `preview.png` (activado por defecto) |
 | `--shallow` / `--no-shallow` | `FIGMA_SHALLOW` | No describe los subcomponentes, solo cómo se usan |
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
+| `--react` / `--no-react` | `FIGMA_REACT` | Genera además componentes React en TypeScript (ver abajo) |
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
 
-Cada ejecución **reemplaza la salida anterior**: borra los archivos que el extractor generó la vez anterior (registrados en `.figspec-manifest.json`) y no toca nada más de la carpeta, así que puede ser parte de tu proyecto (por ejemplo `src/components/Menu`).
+Cada ejecución **reemplaza la salida anterior**: borra los archivos que el extractor generó la vez anterior (registrados en `.figspec-manifest.json`) y las carpetas que queden vacías, y no toca nada más, así que la salida puede vivir dentro de tu proyecto (por ejemplo `--out-dir src/components`).
 
 El extractor también acepta una respuesta guardada de `GET /v1/files/:key/nodes` de la API REST, sin íconos ni imágenes.
+
+## Componentes React
+
+Con `--react` se generan, en la subcarpeta del componente (junto a sus CSS Modules y assets):
+
+- **`<Componente>.tsx`** para la raíz y cada subcomponente, con su CSS Module.
+- **`icons.tsx`**: cada SVG como componente React (los monocromos usan `currentColor`, así que toman el `color` del CSS).
+- **`index.ts`**: exporta el componente raíz y sus tipos.
+
+```tsx
+import { Card } from "./components/Card"; // la subcarpeta copiada a tu proyecto
+
+<Card state="Hover" />
+```
+
+- **Props tipadas desde Figma**: las variantes como uniones (`"Default" | "Hover"`), los booleanos muestran u ocultan capas, los textos enlazados son `string` y los intercambios de instancia `ReactNode`. Todos son opcionales, con los valores por defecto de Figma, y cada componente acepta `className`.
+- Lo que cambia por variante (estilos, textos, props de subcomponentes y estructura) se resuelve dentro del componente.
+- Requisitos del proyecto: TypeScript, React 17+ con el JSX automático, y un bundler con CSS Modules e importación de imágenes (Vite, Next.js y Create React App lo traen). `tokens.css` es opcional: cada `var()` lleva su valor de Figma como respaldo; impórtalo una vez de forma global si quieres usar los tokens.
+- Los archivos se regeneran en cada ejecución: no los edites a mano; envuélvelos o extiéndelos desde tus propios componentes.
 
 ## Cómo usar la salida
 

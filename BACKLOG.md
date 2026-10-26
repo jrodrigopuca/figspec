@@ -163,6 +163,23 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   declaraba `width`/`height` (dependía de los atributos del SVG). Ahora se toma de la caja exportada.
   Detectado con el paquete real del plugin; afectaba también a la ruta de la API.
 
+- [x] **15. Generador de componentes React (`react.js`, opción `--react`).**
+  Desde la salida ya escrita (component.json, CSS Modules, assets) genera un `.tsx` por componente,
+  `icons.tsx` (SVG → componentes con `currentColor`) e `index.ts`. Props tipadas (variantes como
+  uniones, booleanos de visibilidad, textos, `ReactNode` para swaps), variantes como `data-*`,
+  `variantText`/`variantProps` como condiciones y `variantStructures` como returns anticipados.
+  _Verificado:_ `tsc --strict` (con `noUnusedLocals`/`noUnusedParameters`) sin errores sobre el menú
+  real y 7 JSON de prueba; renderizado con React (variantes, props, subcomponentes); captura del
+  menú en Chrome prácticamente idéntica a la `preview.png` de Figma.
+  _Organización de la salida:_ el componente y sus partes (CSS Modules, assets, `.tsx`) van en una
+  subcarpeta con su nombre, lista para copiar al proyecto; arriba quedan `component.json` (rutas con
+  el prefijo de la subcarpeta), `tokens.css` y `preview.png`. La limpieza borra también las carpetas
+  que quedan vacías (p. ej. si el componente cambia de nombre). Verificado: imagen importada en el
+  `.tsx` y `url()` del CSS resueltos por esbuild, `tsc --strict` y captura del menú sin cambios.
+  _Límites:_ los swaps solo se pasan si el componente referido también se generó; los `id` internos
+  de un SVG (clipPath, mask) se repiten si el ícono aparece varias veces; los textos con saltos de
+  línea se muestran en una línea (falta `white-space: pre-line`).
+
 ## P3
 
 - [x] Encabezado y `printHelp` dicen `figma-extract.js`; el archivo es `extractor.js`.

@@ -20,6 +20,7 @@
  *   --no-png          No escribe preview.png.                                     FIGMA_PNG=false
  *   --shallow         No describe los subcomponentes, solo cómo se usan.          FIGMA_SHALLOW=true
  *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
+ *   --react           Genera además componentes React (TypeScript), ver react.js.  FIGMA_REACT=true
  *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
  *
  * Cada ejecución reemplaza la salida anterior: borra solo los archivos que generó antes
@@ -76,6 +77,7 @@ const opts = {
 	assets: envFlag("FIGMA_ASSETS", true),
 	png: envFlag("FIGMA_PNG", true),
 	shallow: envFlag("FIGMA_SHALLOW", false),
+	react: envFlag("FIGMA_REACT", false),
 };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -88,6 +90,8 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-shallow") opts.shallow = false;
 	else if (a === "--css") opts.css = true;
 	else if (a === "--no-css") opts.css = false;
+	else if (a === "--react") opts.react = true;
+	else if (a === "--no-react") opts.react = false;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
 	else if (a === "-h" || a === "--help") {
@@ -134,6 +138,8 @@ function main() {
 			"Falta el paquete: exporta el componente con el plugin (plugin/) y pásalo como parámetro (node extractor.js figspec-<nombre>.json) o en FIGMA_FROM.",
 		);
 	}
+	if (opts.react && !opts.css)
+		fail("--react usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
 	let data;
 	try {
 		data = JSON.parse(fs.readFileSync(opts.from, "utf8"));
@@ -190,32 +196,45 @@ function main() {
 		opts.outDir || `figma-${kebab(component.name) || "componente"}`;
 	fs.mkdirSync(outDir, { recursive: true });
 	cleanOutput(outDir);
+	// El componente y sus partes (CSS Modules, assets, .tsx) van en una subcarpeta lista para
+	// copiar al proyecto; arriba quedan la especificación, los tokens y la vista previa.
+	const part = component.name;
 
 	// Los assets solo vienen en el paquete del plugin (una respuesta de /nodes no los trae)
 	let rename = { images: {}, icons: {} };
-	if (opts.assets && ctx.bundle) rename = writeAssets(outDir);
+	if (opts.assets && ctx.bundle) rename = writeAssets(outDir, part);
 	if (result.icons) result.icons = iconList(); // tras deduplicar por contenido
 	const fix = (s) =>
 		fixIconPaths(fixImagePaths(s, rename.images), rename.icons);
 
 	const files = [];
-	const write = (name, content) => {
-		fs.writeFileSync(path.join(outDir, name), fix(content));
+	const write = (name, content, adapt = fix) => {
+		const file = path.join(outDir, name);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, adapt(content));
 		ctx.generated.add(name);
 		files.push(name);
 	};
 	const json = compactJson(result);
-	write("component.json", json + "\n");
+	// component.json queda fuera de la subcarpeta: sus rutas de assets la incluyen
+	write("component.json", json + "\n", (s) =>
+		fix(s).replace(/(^|[^\w/.-])assets\/(icons|images)\//g, `$1${part}/assets/$2/`),
+	);
 	if (opts.css) {
-		write(`${component.name}.module.css`, moduleCss(component));
+		write(`${part}/${component.name}.module.css`, moduleCss(component));
 		for (const sub of Object.values(subcomponents))
-			write(`${sub.name}.module.css`, moduleCss(sub));
+			write(`${part}/${sub.name}.module.css`, moduleCss(sub));
 		if (ctx.tokens.size) write("tokens.css", tokensCss());
 	}
 	if (opts.png && ctx.bundle && writePreview(nodeId, outDir)) {
 		ctx.generated.add("preview.png");
 		files.push("preview.png");
 	}
+	// Los componentes React se generan desde la salida ya escrita (rutas finales de assets)
+	if (opts.react)
+		require(path.join(__dirname, "react.js")).generateReact(outDir, part, (name, content) =>
+			write(`${part}/${name}`, content, (s) => s),
+		);
 	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
@@ -247,6 +266,7 @@ function writeManifest(outDir) {
 function cleanOutput(outDir) {
 	const root = path.resolve(outDir);
 	let removed = 0;
+	const dirs = new Set();
 	for (const rel of readManifest(outDir)) {
 		const file = path.resolve(root, rel);
 		if (!file.startsWith(root + path.sep)) continue; // nunca fuera de la carpeta de salida
@@ -254,12 +274,15 @@ function cleanOutput(outDir) {
 			fs.rmSync(file, { force: true });
 			removed++;
 		}
+		for (let d = path.dirname(file); d !== root && d.startsWith(root + path.sep); d = path.dirname(d))
+			dirs.add(d);
 	}
-	for (const dir of ["assets/icons", "assets/images", "assets"])
+	// Carpetas que quedaron vacías (subcarpeta del componente, assets/…), de la más profunda a la raíz
+	for (const dir of [...dirs].sort((a, b) => b.length - a.length))
 		try {
-			fs.rmdirSync(path.join(root, dir)); // solo si quedó vacía
+			fs.rmdirSync(dir); // solo si quedó vacía
 		} catch {
-			/* no existe o tiene otros archivos */
+			/* tiene otros archivos */
 		}
 	fs.rmSync(path.join(root, MANIFEST), { force: true });
 	if (removed)
@@ -1604,13 +1627,16 @@ function fixIconPaths(s, rename) {
 }
 
 // ---------------------------------------------------------------- escritura de assets
-function writeAssets(outDir) {
+// Las rutas (icon.file, rename) son relativas a la subcarpeta del componente (part), que es
+// desde donde las usan los CSS Modules y los .tsx.
+function writeAssets(outDir, part) {
+	const dir = path.join(outDir, part);
 	const rename = {}; // imageRef → ruta con extensión
 	const iconRename = {}; // archivo duplicado → archivo con el mismo contenido
 	if (ctx.icons.size) {
 		const ids = [...new Set([...ctx.icons.values()].map((i) => i.id))];
 		const raw = bundleAssets("icons", ids);
-		fs.mkdirSync(path.join(outDir, "assets/icons"), { recursive: true });
+		fs.mkdirSync(path.join(dir, "assets/icons"), { recursive: true });
 		// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
 		// (ya con currentColor, así que el color tampoco las separa). Los números se comparan
 		// redondeados a 0.01: una copia desplazada una fracción de píxel cambia la 5.ª decimal.
@@ -1628,18 +1654,18 @@ function writeAssets(outDir) {
 				continue;
 			}
 			byContent.set(shape(svg), icon.file);
-			fs.writeFileSync(path.join(outDir, icon.file), svg);
-			ctx.generated.add(icon.file);
+			fs.writeFileSync(path.join(dir, icon.file), svg);
+			ctx.generated.add(`${part}/${icon.file}`);
 		}
 	}
 	if (ctx.imageRefs.size) {
 		const bufs = bundleAssets("images", [...ctx.imageRefs]);
-		fs.mkdirSync(path.join(outDir, "assets/images"), { recursive: true });
+		fs.mkdirSync(path.join(dir, "assets/images"), { recursive: true });
 		for (const [ref, buf] of bufs) {
 			const ext = imageExt(buf);
-			fs.writeFileSync(path.join(outDir, "assets/images", ref + ext), buf);
+			fs.writeFileSync(path.join(dir, "assets/images", ref + ext), buf);
 			rename[ref] = `assets/images/${ref}${ext}`;
-			ctx.generated.add(rename[ref]);
+			ctx.generated.add(`${part}/${rename[ref]}`);
 		}
 	}
 	return { images: rename, icons: iconRename };
@@ -1719,13 +1745,14 @@ function px(n) {
 }
 
 function printHelp() {
-	console.log(`Uso: node extractor.js figspec-<nombre>.json [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
+	console.log(`Uso: node extractor.js figspec-<nombre>.json [--react] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
 
 El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
 También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
 
 Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false).
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT (true/false).
+--react genera además componentes React en TypeScript (.tsx), uno por componente.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
 Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);
 }
