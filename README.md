@@ -40,6 +40,8 @@ node extractor.js "<link>" --assets    # link por parámetro + descarga de ícon
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto.
 
+Si Figma limita las peticiones (429), se reintenta hasta 3 veces esperando lo que indica `Retry-After`. Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto), el extractor se detiene y dice cuánto hay que esperar.
+
 ## Cómo usar la salida
 
 - Cada componente usa `styles.root` en su elemento raíz; las variantes se aplican con data-atributos: `<div className={styles.root} data-size="Large">`.

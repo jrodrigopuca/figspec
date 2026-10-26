@@ -59,10 +59,24 @@ Prioridad: **P1** rompe el resultado en casos comunes · **P2** errores sutiles 
   `variantProps`. Los textos enlazados a una prop se excluyen (su contenido sale de la prop).
   _Límite:_ con segmentos de estilo distinto solo se registra el contenido, no el estilo por segmento.
 
-- [ ] **11. Sin reintentos ante el límite de peticiones (429).**
+- [x] **11. Sin reintentos ante el límite de peticiones (429).**
   Si Figma responde 429 durante la descarga de íconos o imágenes, se muestra un aviso y la salida
   queda sin assets (y sin unificación de íconos). Pasó en una prueba real con varias ejecuciones seguidas.
-  _Propuesta:_ reintentar respetando la cabecera `Retry-After`, con un máximo de intentos.
+  _Arreglo:_ `api()` reintenta hasta 3 veces esperando `Retry-After` (segundos o fecha HTTP; sin
+  cabecera: 2 · 4 · 8 s). Si la espera pedida supera `FIGMA_MAX_WAIT` (60 s por defecto) falla
+  enseguida diciendo cuánto esperar. Probado con 7 escenarios simulados.
+
+- [ ] **12. (P1) Cada ejecución gasta varias peticiones de una cuota que puede ser muy baja.**
+  En la prueba real Figma pidió esperar **110 h** tras unas pocas ejecuciones: es el nivel más bajo
+  de límites (plan Starter o asientos View/Collab, con cuotas de pocas peticiones al mes en algunos
+  endpoints). Una ejecución con `--assets --png` hace hasta 5 peticiones: `nodes`, `variables/local`
+  (que solo funciona en Enterprise), `images` (SVG), `files/:key/images` y `images` (PNG).
+  _Propuesta:_
+  - Guardar la respuesta de `nodes` en caché (p. ej. `.figspec-cache/<key>-<node>.json`) y reutilizarla
+    salvo `--refresh`, para iterar sobre el extractor sin consumir cuota (generaliza `--from`).
+  - Pedir `variables/local` solo si se activa explícitamente (`FIGMA_VARIABLES=true`).
+  - Pedir solo lo que falta: no volver a descargar assets ya presentes en la carpeta de salida.
+  - Leer las cabeceras `X-Figma-Plan-Tier` / `X-Figma-Rate-Limit-Type` del 429 para explicar el motivo.
 
 - [x] **6. Desplazamientos mal calculados con algunos bordes.**
   - `strokeAlign: CENTER`: `inset = w/2`, pero el `border` CSS ocupa `w`.

@@ -23,6 +23,7 @@
  *   --from <archivo>  Procesa una respuesta guardada de /v1/files/:key/nodes (sin red; solo parámetro).
  *
  * El token se lee siempre de FIGMA_TOKEN (nunca por parámetro).
+ * FIGMA_MAX_WAIT (segundos, 60 por defecto): espera máxima aceptada al reintentar tras un 429.
  */
 "use strict";
 
@@ -1565,24 +1566,61 @@ function parseFigmaUrl(u) {
 	};
 }
 
+// Ante un 429 se reintenta esperando lo que pide Figma (Retry-After), salvo que supere
+// FIGMA_MAX_WAIT: en algunos planes la espera es de horas y es mejor avisar que colgarse.
+const MAX_RETRIES = 3;
+
 async function api(p, token) {
-	let res;
-	try {
-		res = await fetch(API + p, { headers: { "X-Figma-Token": token } });
-	} catch (e) {
-		throw new Error(
-			`No se pudo conectar con api.figma.com (${(e.cause && e.cause.code) || e.message}). Revisa tu conexión o proxy.`,
-		);
+	const maxWait = Number(process.env.FIGMA_MAX_WAIT) || 60;
+	for (let attempt = 0; ; attempt++) {
+		let res;
+		try {
+			res = await fetch(API + p, { headers: { "X-Figma-Token": token } });
+		} catch (e) {
+			throw new Error(
+				`No se pudo conectar con api.figma.com (${(e.cause && e.cause.code) || e.message}). Revisa tu conexión o proxy.`,
+			);
+		}
+		if (res.ok) return res.json();
+		let wait = 0;
+		if (res.status === 429) {
+			wait = retryAfter(res, attempt);
+			if (attempt < MAX_RETRIES && wait <= maxWait) {
+				console.error(
+					`… Figma limitó las peticiones (429); reintento ${attempt + 1}/${MAX_RETRIES} en ${duration(wait)}.`,
+				);
+				await new Promise((r) => setTimeout(r, wait * 1000));
+				continue;
+			}
+		}
+		const body = (await res.text()).slice(0, 300);
+		const hints = {
+			400: "Petición inválida; revisa el node-id del link.",
+			403: 'Token inválido o vencido, sin el scope "File content: read", sin acceso al archivo, o tu organización bloquea los tokens personales.',
+			404: "Archivo o nodo no encontrado. Revisa el link.",
+			429:
+				wait > maxWait
+					? `Límite de peticiones de Figma alcanzado; Figma pide esperar ${duration(wait)} (más que FIGMA_MAX_WAIT=${maxWait}s).`
+					: `Límite de peticiones de Figma alcanzado tras ${MAX_RETRIES} reintentos; espera unos minutos.`,
+		};
+		throw new Error(`Figma API ${res.status}: ${hints[res.status] || body}`);
 	}
-	if (res.ok) return res.json();
-	const body = (await res.text()).slice(0, 300);
-	const hints = {
-		400: "Petición inválida; revisa el node-id del link.",
-		403: 'Token inválido o vencido, sin el scope "File content: read", sin acceso al archivo, o tu organización bloquea los tokens personales.',
-		404: "Archivo o nodo no encontrado. Revisa el link.",
-		429: "Límite de peticiones de Figma alcanzado; espera un minuto y reintenta.",
-	};
-	throw new Error(`Figma API ${res.status}: ${hints[res.status] || body}`);
+}
+
+// Segundos a esperar: Retry-After (segundos o fecha HTTP) o, si no viene, 2 · 4 · 8 s.
+function retryAfter(res, attempt) {
+	const h = res.headers.get("retry-after");
+	if (h) {
+		const s = /^\d+$/.test(h.trim()) ? Number(h) : (Date.parse(h) - Date.now()) / 1000;
+		if (Number.isFinite(s)) return Math.max(1, Math.ceil(s));
+	}
+	return 2 ** (attempt + 1);
+}
+
+function duration(s) {
+	if (s < 120) return `${s} s`;
+	if (s < 7200) return `${Math.round(s / 60)} min`;
+	return `${Math.round(s / 3600)} h`;
 }
 
 // Una clase por ruta de capas (no por orden de recorrido): una capa extra en una variante
@@ -1647,7 +1685,8 @@ function printHelp() {
        node extractor.js --from respuesta.json
 
 Variables (.env o entorno): FIGMA_TOKEN (obligatoria), FIGMA_LINK, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false).
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS (true/false),
+  FIGMA_MAX_WAIT (segundos máximos de espera al reintentar tras un 429; 60 por defecto).
 Los parámetros anulan al .env; --no-assets, --no-png, --no-shallow y --css desactivan/activan lo definido allí.`);
 }
 
