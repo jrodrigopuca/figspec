@@ -22,6 +22,7 @@
  *   --shallow         No describe los subcomponentes, solo cómo se usan.          FIGMA_SHALLOW=true
  *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
  *   --react           Genera además componentes React (TypeScript), ver react.js.  FIGMA_REACT=true
+ *   --viewer          Genera además viewer.html (visualizador), ver viewer.js.     FIGMA_VIEWER=true
  *   --extract-repeated  Extrae los ítems repetidos a un subcomponente con props y estados.
  *                                                                               FIGMA_EXTRACT_REPEATED=true
  *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
@@ -84,6 +85,7 @@ const opts = {
 	png: envFlag("FIGMA_PNG", true),
 	shallow: envFlag("FIGMA_SHALLOW", false),
 	react: envFlag("FIGMA_REACT", false),
+	viewer: envFlag("FIGMA_VIEWER", false),
 	extractRepeated: envFlag("FIGMA_EXTRACT_REPEATED", false),
 };
 const argv = process.argv.slice(2);
@@ -101,6 +103,8 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--extract-repeated") opts.extractRepeated = true;
 	else if (a === "--no-extract-repeated") opts.extractRepeated = false;
 	else if (a === "--no-react") opts.react = false;
+	else if (a === "--viewer") opts.viewer = true;
+	else if (a === "--no-viewer") opts.viewer = false;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--name") opts.name = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
@@ -158,6 +162,8 @@ function main() {
 	}
 	if (opts.react && !opts.css)
 		fail("--react usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
+	if (opts.viewer && !opts.css)
+		fail("--viewer usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
 	let data;
 	try {
 		data = JSON.parse(fs.readFileSync(opts.from, "utf8"));
@@ -297,6 +303,11 @@ function main() {
 			`… ${ctx.inconsistencies.length} posible(s) inconsistencia(s) del diseño: ${outDir}/inconsistencies.md`,
 		);
 	}
+	// El visualizador embebe la salida ya escrita (CSS, assets y vista previa)
+	if (opts.viewer)
+		require(path.join(__dirname, "viewer.js")).generateViewer(outDir, (name, content) =>
+			write(name, content, (s) => s),
+		);
 	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
@@ -2793,14 +2804,15 @@ function px(n) {
 }
 
 function printHelp() {
-	console.log(`Uso: node extractor.js figspec-<nombre>.json [--name Nombre] [--react] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
+	console.log(`Uso: node extractor.js figspec-<nombre>.json [--name Nombre] [--react] [--viewer] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
 
 El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
 También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
 
 Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_EXTRACT_REPEATED (true/false).
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_VIEWER, FIGMA_EXTRACT_REPEATED (true/false).
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
+--viewer genera además viewer.html: el componente junto a la vista previa de Figma (un solo archivo).
 --extract-repeated convierte los grupos repetidos (3+ hermanos iguales) en un subcomponente con props y estados.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
 Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);

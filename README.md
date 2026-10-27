@@ -37,6 +37,7 @@ figma-menu/                  carpeta de salida
   component.json             especificación (referencia, para un LLM)
   tokens.css                 tokens globales (opcional)
   preview.png                vista previa
+  viewer.html                visualizador (con --viewer)
   Menu/                      el componente: se copia tal cual a tu proyecto
     Menu.module.css          CSS Module de la raíz
     Badge.module.css         … y de cada subcomponente
@@ -54,6 +55,7 @@ figma-menu/                  carpeta de salida
 | `--shallow` / `--no-shallow` | `FIGMA_SHALLOW` | No describe los subcomponentes, solo cómo se usan |
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
 | `--react` / `--no-react` | `FIGMA_REACT` | Genera además componentes React en TypeScript (ver abajo) |
+| `--viewer` / `--no-viewer` | `FIGMA_VIEWER` | Genera además `viewer.html`, el visualizador (ver abajo) |
 | `--extract-repeated` | `FIGMA_EXTRACT_REPEATED` | Convierte los ítems repetidos en un subcomponente con props y estados (ver abajo) |
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
@@ -124,6 +126,23 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 - `inconsistencies.md` (solo si hay alguna) lista posibles errores del diseño para revisar con UX: elementos repetidos que difieren solo en tipografía, colores escritos a mano que coinciden con un estilo o variable, y textos con los valores de un estilo de texto que no lo aplican. Usa los nombres de capa de Figma para que sea fácil encontrarlos.
 - Si el texto se ve más grueso que en Figma (Chrome en macOS), agrega en tu CSS global `-webkit-font-smoothing: antialiased`: Figma dibuja el texto con un suavizado más fino. Es una decisión de tu proyecto, no del componente.
 - `repeated` señala grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas): qué cambia entre ellos (`varies`) y cuáles comparten estilos (`styleGroups`, posibles estados). Son candidatos a un subcomponente con `items.map(...)`, y sirven para detectar inconsistencias del diseño.
+
+## Visualizador
+
+`viewer.html` muestra el componente junto a la vista previa de Figma, para revisar la salida sin abrir un proyecto. Es un solo archivo con todo adentro (especificación, CSS, íconos, imágenes y vista previa): se abre con doble clic y se puede pasar a otra persona (por ejemplo, a UX) sin la carpeta. No usa la red.
+
+```sh
+node extractor.js figspec-<nombre>.json --viewer   # al generar la salida
+node viewer.js figma-menu/                         # o después, sobre una salida ya generada
+```
+
+Usa los mismos `.module.css` de la salida (con el nombre del componente como prefijo de cada clase) y la misma interpretación de `component.json` que el generador React (`spec.js`), así que lo que muestra es lo que se generó. No ejecuta React. Zoom: `Cmd/Ctrl+0` ajusta al lienzo y `Cmd/Ctrl+1` lo deja al 100 %.
+
+Arriba se elige qué se ve: **Render** (el componente generado, con sus valores por defecto) o **Figma** (la vista previa exportada). Los dos ocupan el mismo lugar: el componente se ubica sobre la vista previa con `meta.preview`, aunque la imagen incluya sombras alrededor.
+
+Si un texto se ve con otra tipografía (por ejemplo, con serifas), la fuente del diseño no está instalada en tu equipo: el CSS la nombra sin una genérica de respaldo.
+
+En desarrollo: la comparación (lado a lado, superpuesta, diferencia), el árbol de capas y el inspector llegan en los próximos pasos (ver [BACKLOG.md](BACKLOG.md)).
 
 ## Pruebas
 

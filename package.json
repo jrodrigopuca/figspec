@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Exporta un componente de Figma con un plugin y lo convierte en component.json, CSS Modules y componentes React (TypeScript).",
   "bin": {
-    "figspec": "extractor.js"
+    "figspec": "extractor.js",
+    "figspec-viewer": "viewer.js"
   },
   "scripts": {
     "test": "node --test test/"
@@ -12,6 +13,9 @@
     "extractor.js",
     "react.js",
     "spec.js",
+    "viewer.js",
+    "viewer-client.js",
+    "viewer.css",
     "plugin/"
   ],
   "license": "MIT",

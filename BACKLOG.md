@@ -115,8 +115,22 @@ carpeta aparte):
   interpretación compartida — condiciones, casos por variante, estructura activa, valores por
   defecto, grupos para `.map`, nombres —; react.js lo usa y su salida es idéntica byte a byte en
   los 24 casos de prueba y reales; `test/spec.test.js` evalúa el TSX generado y comprueba la
-  paridad, también con casos superpuestos) · 3 esqueleto viewer.js · 4 render real (validar
-  con menu mobile y login antes de seguir) · 5 comparación · 6 árbol + hit-test · 7 inspector ·
+  paridad, también con casos superpuestos) · ~~3 esqueleto viewer.js~~ (hecho: `viewer.js` con CLI y
+  `--viewer`/`FIGMA_VIEWER` en el extractor, registrado en el manifiesto; `viewer-client.js` y
+  `viewer.css` insertados en el HTML; datos en `<script type="application/json">` sin `<`
+  literal; SVG como texto y el resto en base64; `url()` del CSS → `asset:<ruta>`; CSS prefijado
+  `Comp__clase` y tokens en `:host` dentro del Shadow DOM; zoom con un contenedor ya escalado;
+  error claro si `meta.format` no es 1; probado en Chrome con menu mobile 361 KB, login 3 MB y
+  un caso sin vista previa; 11 pruebas en `test/viewer.test.js`) · ~~4 render real~~ (hecho: `renderTree` arma un árbol virtual
+  con la lógica de `spec.js` y `mount` lo pasa al Shadow DOM; base `all: initial` +
+  `box-sizing: border-box` como asume el extractor; selector Render / Figma; el componente sobre
+  la vista previa en `meta.preview.offset`. Validado: el HTML es igual al de React
+  (`renderToStaticMarkup` del .tsx generado, clases y atributos normalizados) en las 24 salidas
+  de prueba y reales, en cada combinación de variantes de la raíz y con booleanos y textos
+  cambiados, incluido un set sintético State × Size con texto, prop de instancia y estructura por
+  variante, y aria; en Chrome, menu mobile y login caen exactos sobre la vista previa; las
+  diferencias son las fuentes no instaladas y el fondo translúcido. 6 pruebas de render en
+  `test/viewer.test.js`; el arnés con React vive fuera del repo porque necesita React) · 5 comparación · 6 árbol + hit-test · 7 inspector ·
   8 aviso de fuentes + README.
   _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
   lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de
@@ -126,6 +140,14 @@ carpeta aparte):
   autocontenido (~3 MB en el login); (5) sin Google Fonts al principio; (6) figmaBox en
   figma-geometry.json, en 2b; (7) recortes al diseño (panel "Diseño en idioma Figma", ajuste
   manual, punto ámbar, filtro del árbol, apilado automático); (8) preview por variante = figspec 3.
+  _Decisión pendiente (encontrada en el paso 4):_ el CSS nombra la fuente sin una genérica de
+  respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif). Pasa
+  también en el proyecto, no solo en el visualizador. Opciones: agregar `sans-serif` (o `serif`/
+  `monospace` según una lista de fuentes conocidas) o dejarlo así y avisar (paso 8). Por defecto:
+  sin cambios hasta el paso 8.
+  _Prueba pendiente:_ la paridad con React se comprobó con un arnés fuera del repo (esbuild +
+  react-dom); repetirla cuando cambie `react.js` o `renderTree`, o decidir si se suma como prueba
+  opcional que se salta sin React instalado.
   _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
   deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
   comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una
