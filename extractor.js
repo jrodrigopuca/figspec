@@ -211,6 +211,12 @@ function main() {
 		if (rep.length) comp.repeated = rep;
 		if (opts.extractRepeated) extractRepeated(comp, subcomponents);
 	}
+	// Una respuesta de /nodes (API REST) no trae los archivos: las rutas quedarían sin archivo
+	if (!ctx.bundle && opts.assets && (ctx.icons.size || ctx.imageRefs.size)) {
+		const msg = `La entrada no es un paquete del plugin: los ${ctx.icons.size} ícono(s) y ${ctx.imageRefs.size} imagen(es) no están en la salida y sus rutas (assets/…) quedan sin archivo. Exporta con el plugin para incluirlos.`;
+		console.error(`… ${msg}`);
+		ctx.notes.add(msg);
+	}
 
 	const result = {
 		meta: {
@@ -817,6 +823,14 @@ function rotationOf(node) {
 			);
 		return 0;
 	}
+	// Determinante negativo: la capa está espejada (flip). Leerla como rotación daría un ángulo
+	// equivocado (p. ej. 180°), así que no se aplica nada y se avisa.
+	if (t[0][0] * t[1][1] - t[0][1] * t[1][0] < 0) {
+		ctx.notes.add(
+			"Hay capas espejadas (flip) en Figma: no se reflejó el espejado (haría falta transform: scaleX(-1) o scaleY(-1)).",
+		);
+		return 0;
+	}
 	// Figma: [[cos, sin], [-sin, cos]] con ángulo antihorario → CSS (horario) = -ángulo
 	const ang = (Math.atan2(t[1][0], t[0][0]) * 180) / Math.PI;
 	return Math.abs(ang) > 0.5 ? ang : 0;
@@ -842,6 +856,12 @@ function placement(node, parent, pctx) {
 	// Posición absoluta: padre sin auto layout, o hijo marcado como absoluto
 	if (!parentLayout || node.layoutPositioning === "ABSOLUTE") {
 		pctx.needsRelative = true;
+		// Las cajas de Figma son las ya rotadas: dentro de un padre rotado, el desplazamiento se
+		// calcula contra su caja rotada y no contra el padre sin rotar
+		if (rotationOf(parent))
+			ctx.notes.add(
+				"Hay capas con posición absoluta dentro de un elemento rotado: sus posiciones se calcularon sin descontar la rotación del padre y pueden quedar desplazadas.",
+			);
 		// En CSS el contenedor de un hijo absoluto es la caja de padding (dentro del borde)
 		const pb = parent.absoluteBoundingBox;
 		const ins = pctx.inset || NO_INSET;
@@ -1200,6 +1220,10 @@ function effectsCss(node) {
 	const vis = (node.effects || []).filter((e) => e.visible !== false);
 	const css = {};
 	const text = node.type === "TEXT";
+	if (text && vis.some((e) => e.type === "INNER_SHADOW"))
+		ctx.notes.add(
+			"Hay textos con sombra interior: CSS no la tiene para texto, se aproximó como sombra exterior (text-shadow).",
+		);
 	const shadows = vis
 		.filter((e) => e.type === "DROP_SHADOW" || e.type === "INNER_SHADOW")
 		.map((e) => {
@@ -1290,7 +1314,11 @@ function textCss(node, el) {
 		}
 	}
 
-	const chars = node.characters || "";
+	// Figma separa líneas con \n o con U+2028; en CSS hacen falta pre-line (o pre si el texto no se
+	// ajusta al ancho) para que se vean. Se normaliza a \n.
+	const chars = String(node.characters || "").replace(/\u2028/g, "\n");
+	if (chars.includes("\n") && !(s.textTruncation === "ENDING" && !(s.maxLines > 1)))
+		css["white-space"] = css["white-space"] === "nowrap" ? "pre" : "pre-line";
 	const ov = node.characterStyleOverrides || [];
 	const table = node.styleOverrideTable || {};
 	if (ov.some(Boolean)) {

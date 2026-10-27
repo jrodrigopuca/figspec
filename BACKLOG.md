@@ -177,8 +177,8 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   que quedan vacías (p. ej. si el componente cambia de nombre). Verificado: imagen importada en el
   `.tsx` y `url()` del CSS resueltos por esbuild, `tsc --strict` y captura del menú sin cambios.
   _Límites:_ los swaps solo se pasan si el componente referido también se generó; los `id` internos
-  de un SVG (clipPath, mask) se repiten si el ícono aparece varias veces; los textos con saltos de
-  línea se muestran en una línea (falta `white-space: pre-line`).
+  de un SVG (clipPath, mask) se repiten si el ícono aparece varias veces. (Textos con saltos de
+  línea: resuelto, ver P3.)
 
 ## Nombres (plan revisado por architect, senior-dev y ux-ui)
 
@@ -243,17 +243,25 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   captura en Chrome igual a la `preview.png`; `tsc --strict` sobre el menú, 7 JSON de prueba y 7
   casos genéricos; 21 pruebas en `test/naming.test.js`. Sin la opción, la salida no cambia.
   _Pendiente:_ `aria-current` / `aria-disabled` según el estado (no se puede saber con certeza qué
-  estado es cuál); nombrar estados desde el plugin (paso 3); extraer en componentes con variantes;
-  generar `items.map(...)` con un array de datos en lugar de instancias explícitas.
+  estado es cuál); extraer en componentes con variantes; generar `items.map(...)` con un array de
+  datos en lugar de instancias explícitas. (Nombrar estados desde el plugin: hecho, paso 3b.)
 
 ## P3
 
 - [x] Encabezado y `printHelp` dicen `figma-extract.js`; el archivo es `extractor.js`.
-- [ ] Con una respuesta de `/nodes` (no un paquete del plugin) no hay íconos ni imágenes y no se avisa.
+- [x] Con una respuesta de `/nodes` (no un paquete del plugin) no hay íconos ni imágenes y no se avisa.
+  _Arreglo:_ si el diseño tiene íconos o imágenes, aviso en la consola y en `meta.notes` (sus rutas
+  quedan sin archivo).
 - [x] `subscribed_id` no existe en `/variables/local`; quitar ese bloque.
 - [x] `/images?ids=…` con muchos íconos puede exceder el largo de URL. _Retirado: se eliminó la API._
-- [ ] Documentar aproximaciones en `notes`: `rotate` en hijos absolutos, `INNER_SHADOW` en texto
+- [x] Documentar aproximaciones en `notes`: `rotate` en hijos absolutos, `INNER_SHADOW` en texto
   (sale como `text-shadow` sin `inset`).
+  _Arreglo:_ notas para sombra interior en texto, hijos con posición absoluta dentro de un elemento
+  rotado y capas espejadas (flip). Las espejadas además ya no se rotan: antes un espejado
+  horizontal salía como `rotate(180deg)`.
+- [x] Textos con saltos de línea se mostraban en una línea: ahora `white-space: pre-line` (o `pre`
+  si el texto no se ajusta al ancho), y el separador U+2028 de Figma se normaliza a `\n`.
+  Pruebas en `test/output.test.js`.
 - [x] **(P2)** (Consecuencia de #1) Los íconos que no son instancias se deduplicaban por `node.id`:
   el mismo dibujo repetido generaba varios archivos (prueba real: `icon-2`, `icon-3`, `icon-5` e
   `icon-6` idénticos).
