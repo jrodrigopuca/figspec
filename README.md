@@ -71,11 +71,13 @@ Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.
 Para ir de Figma al visualizador sin escribir rutas, indica una vez en un `.env` (copia de `.env.example`) **carpetas**, así sirve para varios componentes:
 
 ```sh
-FIGMA_FROM=~/Design/figspec          # donde guardas los paquetes que exporta el plugin
-FIGMA_OUT_DIR=.figspec               # salidas de trabajo: una subcarpeta por componente
-FIGMA_DECISIONS=figspec/decisions    # decisiones del proyecto (versionadas): una por componente
-FIGMA_INBOX=~/Downloads              # donde descarga tu navegador (lo que guarda el visualizador)
+FIGMA_FROM=figma-inbox            # donde guardas lo que exporta el plugin
+FIGMA_INBOX=figma-inbox           # donde guardas lo que descarga el visualizador (puede ser la misma)
+FIGMA_OUT_DIR=figma-work          # salidas de trabajo: una subcarpeta por componente
+FIGMA_DECISIONS=figma-decisions   # decisiones: una por componente
 ```
+
+Esas tres carpetas ya vienen en el repositorio, cada una con un README que explica qué va adentro; su contenido no se versiona (son diseños privados). En tu proyecto puedes usar otras rutas; ahí sí conviene versionar las decisiones.
 
 | Comando | Qué hace |
 |---|---|
@@ -85,8 +87,6 @@ FIGMA_INBOX=~/Downloads              # donde descarga tu navegador (lo que guard
 | `npm run viewer [-- componente]` | Vuelve a generar el visualizador de ese componente (o del último generado) y lo abre |
 
 El ciclo queda: exportas con el plugin → `npm start` → revisas en el visualizador → si cambias nombres, "Descargar decisiones" → `npm start` otra vez.
-
-Más simple todavía: una sola carpeta de entrada (`FIGMA_FROM=figma-inbox` y `FIGMA_INBOX=figma-inbox`) donde guardas los exports del plugin y lo que descarga el visualizador. Dentro de este repositorio usa nombres `figma-*/`, que git ignora: los diseños y sus nombres son privados.
 
 - **Decisiones del proyecto** (`FIGMA_DECISIONS`): un archivo por componente (`achievements.decisions.json`), relacionado por el id del componente que guarda adentro (si renombras el componente o el archivo, se sigue encontrando; una copia del componente se reconoce por su nombre y por las rutas de sus capas). En cada corrida el extractor le incorpora lo entrante —los nombres que elegiste en el plugin (`figspec-x.names.json`) y lo que descargó el visualizador (`figspec-x.decisions.json`, junto al paquete o en `FIGMA_INBOX`)—, combinado por fecha, y lo actualiza solo si cambió (lo dice). Versiónalo con tu proyecto. `--decisions <archivo>` en el comando solo se lee; `--no-decisions` genera sin nombres de archivos.
 - El navegador no reemplaza un archivo que ya descargaste: guarda `figspec-x (1).json`. El extractor usa siempre la copia más reciente y lo dice.

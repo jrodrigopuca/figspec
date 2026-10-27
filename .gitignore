@@ -3,8 +3,11 @@
 .env.*
 !.env.example
 
-# Salida generada por el extractor (carpeta por defecto: figma-<componente>/)
-figma-*/
+# Carpetas de trabajo (figma-inbox, figma-work, figma-decisions) y salidas por defecto
+# (figma-<componente>/): su contenido es privado (diseños y nombres). Solo se versiona el README
+# de cada una, para que las carpetas existan al clonar.
+figma-*/*
+!figma-*/README.md
 
 # Paquetes exportados con el plugin (pueden incluir diseños privados)
 figspec-*.json
