@@ -354,3 +354,20 @@ test("hitTest: la capa más profunda bajo el punto; entre iguales, la de encima"
 	assert.equal(client.hitTest(items, { x: 200, y: 0 }), -1);
 	assert.equal(client.hitTest(items, { x: 0, y: 0 }), 0, "las cajas vacías no cuentan");
 });
+
+// ---------------------------------------------------------------- fuentes
+test("fuentes: las que nombra el CSS, sin genéricas ni variables ni repetidas", () => {
+	const css = ['.a { font-family: "Geist"; } .b { font-family: "Roboto", sans-serif; }', ".c { font-family: 'Geist', var(--f), monospace !important; } .d{font-family:Pacifico}"];
+	assert.deepEqual(client.fontFamilies(css), ["Geist", "Roboto", "Pacifico"]);
+	assert.deepEqual(client.fontFamilies([null, ""]), []);
+});
+
+test("fuentes: instalada si el ancho cambia respecto de alguna genérica", () => {
+	const widths = { "72px monospace": 600, "72px serif": 500, "72px sans-serif": 520 };
+	const measure = (installed) => (font) => {
+		const m = font.match(/^72px "(.+)", (.+)$/);
+		return m ? (installed.includes(m[1]) ? 480 : widths[`72px ${m[2]}`]) : widths[font];
+	};
+	assert.equal(client.fontInstalled(measure(["Inter"]), "Inter"), true);
+	assert.equal(client.fontInstalled(measure([]), "Geist"), false);
+});

@@ -95,6 +95,37 @@ function shadowCss(data) {
 	return parts.join("\n");
 }
 
+// ---------------------------------------------------------------- fuentes
+const GENERIC_FONTS = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong", "inherit", "initial", "unset", "revert"]);
+
+// Fuentes que nombra el CSS de los componentes (sin las genéricas), en orden de aparición
+function fontFamilies(cssList) {
+	const out = [];
+	for (const css of cssList)
+		for (const m of (css || "").matchAll(/font-family\s*:\s*([^;}]+)/g))
+			for (const raw of m[1].split(",")) {
+				const name = raw.trim().replace(/^["']|["']$/g, "").replace(/\s*!important$/, "");
+				if (name && !GENERIC_FONTS.has(name.toLowerCase()) && !name.startsWith("var(") && !out.includes(name)) out.push(name);
+			}
+	return out;
+}
+
+// Una fuente está instalada si cambia el ancho de un texto respecto de las genéricas de respaldo.
+// measure(font) devuelve el ancho del texto de prueba con ese valor de font (canvas en el navegador).
+function fontInstalled(measure, name) {
+	return ["monospace", "serif", "sans-serif"].some((g) => measure(`72px "${name}", ${g}`) !== measure(`72px ${g}`));
+}
+
+function missingFonts(doc, cssList) {
+	const ctx = doc.createElement("canvas").getContext && doc.createElement("canvas").getContext("2d");
+	if (!ctx) return [];
+	const measure = (font) => {
+		ctx.font = font;
+		return ctx.measureText("mmmmmmmmmmlli1WQ@#ñ").width;
+	};
+	return fontFamilies(cssList).filter((f) => !fontInstalled(measure, f));
+}
+
 // ---------------------------------------------------------------- render
 // Árbol virtual del componente con valores concretos de sus props, con la misma lógica que el
 // JSX de react.js (spec.js): estructura por variante, textos y props por variante, visibilidad,
@@ -666,6 +697,9 @@ function boot(doc, data) {
 		}, text: "Código" });
 
 	const notices = [];
+	const fonts = missingFonts(doc, Object.values(data.css || {}));
+	if (fonts.length)
+		notices.push(`${fonts.length === 1 ? "La fuente" : "Las fuentes"} ${fonts.join(", ")} no ${fonts.length === 1 ? "está instalada" : "están instaladas"} en este equipo: esos textos se ven con otra tipografía y en la comparación con Figma van a aparecer distintos. ${fonts.length === 1 ? "Instálala" : "Instálalas"} para comparar.`);
 	if (data.missing && data.missing.length)
 		notices.push(`Faltan ${data.missing.length} archivo(s) de la salida (${data.missing.slice(0, 3).join(", ")}${data.missing.length > 3 ? "…" : ""}). Genera el visualizador desde la carpeta completa.`);
 
@@ -748,4 +782,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

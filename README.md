@@ -149,7 +149,7 @@ Arriba se elige cómo comparar el componente generado (con sus valores por defec
 
 El último modo usado se recuerda. Sin vista previa en el paquete solo está el render. Un componente translúcido (con desenfoque de fondo) se ve distinto en la diferencia: la vista previa incluye lo que había detrás en Figma.
 
-Si un texto se ve con otra tipografía (por ejemplo, con serifas), la fuente del diseño no está instalada en tu equipo: el CSS la nombra sin una genérica de respaldo.
+Si una fuente del diseño no está instalada en tu equipo, el visualizador lo avisa arriba: esos textos se ven con otra tipografía (el CSS la nombra sin una genérica de respaldo) y en la comparación aparecen distintos. Instálala para comparar.
 
 A la izquierda está el árbol de capas del render (▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente, que se despliega para ver su estructura). Al pasar el puntero por el lienzo o por el árbol se marca la capa en los dos; un clic en el lienzo elige la capa más profunda bajo el puntero (en cualquier modo, también sobre la imagen de Figma) y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor; en el árbol se navega con las flechas. A la derecha, la ruta de la capa elegida y su clase.
 

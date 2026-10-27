@@ -145,7 +145,10 @@ carpeta aparte):
   cambia con el zoom; Esc sube; teclado en el árbol; ruta y clase en el panel derecho. Validado
   en Chrome con eventos simulados (clic sobre "Dashboard" en el panel de Figma, Esc, Código,
   desplegar una instancia) y arranque de las 24 salidas; 4 pruebas nuevas) · 7 inspector ·
-  8 aviso de fuentes + README.
+  8 ~~aviso de fuentes~~ (adelantado a pedido del usuario el 2026-10-27: `fontFamilies` lee las
+  fuentes del CSS y `fontInstalled` mide un texto con cada una contra monospace, serif y
+  sans-serif en un canvas; aviso arriba con las que faltan. Validado en Chrome: menu mobile → Geist,
+  Inter; login → Geist, Pacifico; Roboto instalada no aparece; 2 pruebas) + README.
   _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
   lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de
   variantes/props; preview por variante (`figspec: 3`).
