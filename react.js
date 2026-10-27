@@ -8,6 +8,12 @@
  *   <Componente>.tsx  → la raíz y cada subcomponente, con su CSS Module
  *   icons.tsx         → cada SVG como componente React (currentColor)
  *   index.ts          → exporta el componente raíz y sus tipos
+ *
+ * Como comando (npm run react [-- componente]) lleva el componente a tu proyecto: vuelve a
+ * generar la salida (paquete + decisiones, siempre al día) y copia la carpeta del componente a
+ * FIGMA_REACT_DIR/<Componente>/ (o --to <carpeta>), con un manifiesto para reemplazar solo lo que
+ * generó antes. Avisa qué cambia en la API (componentes, props, clases) respecto de la entrega
+ * anterior; --dry-run solo lo muestra.
  */
 
 const fs = require("fs");
@@ -450,4 +456,143 @@ function indent(s, n) {
 		.join("\n");
 }
 
-module.exports = { generateReact };
+// ---------------------------------------------------------------- npm run react
+const MANIFEST = ".figspec-manifest.json";
+
+// API pública de lo generado: por componente, sus props (tipo y opciones) y sus clases
+function apiSummary(spec) {
+	const out = {};
+	for (const comp of [spec.component, ...Object.values(spec.subcomponents || {})]) {
+		const props = {};
+		for (const [k, def] of Object.entries(comp.props || {}))
+			props[k] = def.type === "variant" && def.options ? `${def.type}: ${def.options.join(" | ")}` : def.type;
+		out[comp.name] = { props, classes: [...cssClasses(comp)].sort() };
+	}
+	return out;
+}
+
+// Qué cambia de una entrega a otra. breaking: lo que puede romper código que ya usa el componente
+// (componentes o props que se quitan, tipos u opciones que cambian); info: lo que se agrega o
+// cambia por dentro (clases de los CSS Modules)
+function apiChanges(before, after) {
+	const breaking = [];
+	const info = [];
+	if (!before) return { breaking, info, first: true };
+	for (const name of Object.keys(before))
+		if (!after[name]) breaking.push(`Se quitó el componente ${name}.`);
+	for (const [name, next] of Object.entries(after)) {
+		const prev = before[name];
+		if (!prev) {
+			info.push(`Componente nuevo: ${name}.`);
+			continue;
+		}
+		for (const [k, t] of Object.entries(prev.props))
+			if (!(k in next.props)) breaking.push(`${name}: se quitó la prop ${k}.`);
+			else if (next.props[k] !== t) breaking.push(`${name}: la prop ${k} cambió (${t} → ${next.props[k]}).`);
+		for (const k of Object.keys(next.props)) if (!(k in prev.props)) info.push(`${name}: prop nueva ${k} (${next.props[k]}).`);
+		const gone = prev.classes.filter((c) => !next.classes.includes(c));
+		const added = next.classes.filter((c) => !prev.classes.includes(c));
+		if (gone.length || added.length)
+			info.push(`${name}: clases ${[...gone.map((c) => `−.${c}`), ...added.map((c) => `+.${c}`)].join(" ")} (solo importa si tu CSS o tu código usan esas clases).`);
+	}
+	return { breaking, info, first: false };
+}
+
+function cli(argv) {
+	const os = require("os");
+	const { spawnSync } = require("child_process");
+	const { loadDefaultEnv, expandHome } = require("./env");
+	loadDefaultEnv();
+	let to = null;
+	let dry = false;
+	let force = false;
+	const pass = [];
+	for (let i = 0; i < argv.length; i++) {
+		if (argv[i] === "--to") to = argv[++i];
+		else if (argv[i] === "--dry-run") dry = true;
+		else if (argv[i] === "--force") force = true;
+		else if (argv[i] !== "--react") pass.push(argv[i]);
+	}
+	const base = expandHome(to || process.env.FIGMA_REACT_DIR);
+	if (!base) {
+		console.error("✖ Falta el destino: define FIGMA_REACT_DIR en el .env (p. ej. FIGMA_REACT_DIR=src/components) o usa --to <carpeta>.");
+		return 1;
+	}
+
+	// 1. La salida al día: el extractor con el paquete y las decisiones actuales
+	const report = path.join(os.tmpdir(), `figspec-react-${process.pid}-${Date.now()}.json`);
+	const r = spawnSync(process.execPath, [path.join(__dirname, "extractor.js"), ...pass, "--react", "--report", report], { encoding: "utf8", env: process.env });
+	process.stderr.write(r.stderr || "");
+	if (r.status !== 0) return r.status || 1;
+	const info = JSON.parse(fs.readFileSync(report, "utf8"));
+	fs.rmSync(report, { force: true });
+	const spec = JSON.parse(fs.readFileSync(path.join(info.outDir, "component.json"), "utf8"));
+	const part = spec.component.name;
+	const outFiles = JSON.parse(fs.readFileSync(path.join(info.outDir, MANIFEST), "utf8")).files;
+	// La carpeta del componente y, junto a ella, los tokens (cada var() trae su valor de respaldo)
+	const files = outFiles.filter((f) => f.startsWith(`${part}/`)).map((f) => [path.join(info.outDir, f), f.slice(part.length + 1)]);
+	if (fs.existsSync(path.join(info.outDir, "tokens.css"))) files.push([path.join(info.outDir, "tokens.css"), "tokens.css"]);
+
+	// 2. El destino: solo se reemplaza lo que generó figspec antes
+	const dest = path.join(base, part);
+	let prev = null;
+	try {
+		prev = JSON.parse(fs.readFileSync(path.join(dest, MANIFEST), "utf8"));
+	} catch {
+		// primera entrega en esa carpeta
+	}
+	if (!prev && fs.existsSync(dest) && fs.readdirSync(dest).length && !force) {
+		console.error(`✖ ${dest} ya existe y no la generó figspec: no se escribe nada para no pisar tus archivos. Usa otra carpeta (--to) o --force.`);
+		return 1;
+	}
+	// Si antes se entregó con otro nombre, la carpeta vieja queda: se avisa
+	const nodeId = spec.meta && spec.meta.source && spec.meta.source.node;
+	const elsewhere = [];
+	for (const name of fs.existsSync(base) ? fs.readdirSync(base) : []) {
+		if (name === part) continue;
+		try {
+			const m = JSON.parse(fs.readFileSync(path.join(base, name, MANIFEST), "utf8"));
+			if (m.component === nodeId) elsewhere.push(name);
+		} catch {
+			// no es una entrega de figspec
+		}
+	}
+
+	// 3. Qué cambia en la API
+	const api = apiSummary(spec);
+	const changes = apiChanges(prev && prev.api, api);
+	if (changes.first) console.error(`↺ Primera entrega de ${part} en ${dest}.`);
+	else if (!changes.breaking.length && !changes.info.length) console.error(`↺ Sin cambios en la API de ${part}.`);
+	if (changes.breaking.length) {
+		console.error(`⚠ Cambios que pueden romper el código que ya usa ${part}:`);
+		for (const c of changes.breaking) console.error(`   ${c}`);
+	}
+	if (changes.info.length) {
+		console.error("… Otros cambios:");
+		for (const c of changes.info) console.error(`   ${c}`);
+	}
+	for (const name of elsewhere) console.error(`⚠ Este componente se entregó antes como ${name} (${path.join(base, name)}): bórrala si ya no se usa.`);
+	if (dry) {
+		console.error(`… --dry-run: no se escribió nada en el destino (${files.length} archivos irían a ${dest}).`);
+		return 0;
+	}
+
+	const root = path.resolve(dest);
+	const next = new Set(files.map(([, rel]) => rel));
+	for (const rel of (prev && prev.files) || []) {
+		const file = path.resolve(root, rel);
+		if (!next.has(rel) && file.startsWith(root + path.sep)) fs.rmSync(file, { force: true });
+	}
+	for (const [src, rel] of files) {
+		const file = path.join(dest, rel);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.copyFileSync(src, file);
+	}
+	fs.writeFileSync(path.join(dest, MANIFEST), JSON.stringify({ generatedBy: "figspec", component: nodeId, files: [...next].sort(), api }, null, 2) + "\n");
+	console.error(`✔ ${dest}/ (${files.length} archivos): import { ${part} } from "<ruta a ${path.basename(base)}>/${part}";`);
+	return 0;
+}
+
+if (require.main === module) process.exitCode = cli(process.argv.slice(2));
+
+module.exports = { generateReact, apiSummary, apiChanges };

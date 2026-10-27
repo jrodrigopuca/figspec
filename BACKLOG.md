@@ -33,8 +33,16 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
 
 **Probar en un proyecto React real** (hasta ahora: `tsc --strict`, esbuild y render con React en una
 carpeta aparte):
-- [ ] Integrar la salida en un proyecto Vite o Next: CSS Modules, importación de SVG/imágenes,
-  `tokens.css` global, `index.ts`.
+- [x] Integrar la salida en un proyecto Vite: `figma-playground/` (Vite 8, React 19, TypeScript 7
+  con `strict` y `noUnusedLocals`). Con Achievements: tipos, build y render bien (CSS Modules,
+  imágenes, íconos, `tokens.css` global, `index.ts`); la única diferencia, la fuente (ver
+  `sans-serif` abajo). `npm --prefix figma-playground run check` lo repite; no está en `npm test`
+  porque necesita las dependencias instaladas.
+- [ ] Lo mismo en Next.js (App Router: los componentes no usan hooks, deberían andar como Server
+  Components; comprobar CSS Modules e imágenes con `next/image` ausente).
+- [ ] Playground: probar con más componentes a la vez (choques de `tokens.css` entre componentes
+  con el mismo token y distinto valor: el último cargado gana).
+- [ ] Playground: mantener las versiones de Vite/React/TypeScript (revisar cada tanto).
 - [ ] Rendimiento con diseños grandes (el paquete del login pesa 3,1 MB por la imagen en base64).
 
 **Decisiones abiertas** (cada una tiene un valor por defecto hoy; confirmar o cambiar):
@@ -187,8 +195,14 @@ carpeta aparte):
   por defecto); sin ítems extraídos, una nota. Validado con el menú real extraído: legacy →
   archived llegó a NavItem. De paso: "Guardar nombres" del viewer.html suelto fallaba desde 3a
   (`const doc` tapaba el documento en `download()`); corregido, con una prueba que lo impide.
-  4 pruebas) · 4 `npm run react` (destino, al día, aviso de cambios en
-  clases y props) · 5 grupos repetidos.
+  4 pruebas) · ~~4 `npm run react`~~ (hecho: CLI en `react.js`; vuelve a correr el extractor con `--react`
+  —siempre al día—, copia la carpeta del componente y `tokens.css` a `FIGMA_REACT_DIR/<Componente>/`
+  o `--to`, con manifiesto (`component`, `files`, `api`): reemplaza o borra solo lo suyo; no
+  escribe en una carpeta existente que no generó figspec (salvo `--force`); `apiSummary` y
+  `apiChanges` avisan lo que rompe (componentes o props que se quitan, tipos u opciones que
+  cambian) y lo demás (props nuevas, clases); avisa si el componente se entregó antes con otro
+  nombre; `--dry-run`. Validado con "Achievements" en una copia: primera entrega, sin cambios, y un
+  ícono renombrado (aviso de clases, el `.svg` viejo se borra); 5 pruebas) · 5 grupos repetidos.
   _Tema a revisar (usuario):_ agrupar los ítems de un grupo repetido. Opciones: una clase común
   (`.item`) si los estilos son idénticos; `.item` más un modificador por estado
   (`data-state`) si difieren; o el subcomponente (con `.map` en React). Decidir por grupo en el

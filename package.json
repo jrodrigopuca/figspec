@@ -11,6 +11,8 @@
     "start": "node serve.js",
     "extract": "node extractor.js",
     "viewer": "node viewer.js --open",
+    "react": "node react.js",
+    "playground": "npm --prefix figma-playground run dev",
     "test": "node --test test/"
   },
   "files": [

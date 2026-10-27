@@ -9,6 +9,12 @@
 figma-*/*
 !figma-*/README.md
 
+# figma-playground es un proyecto (se versiona), salvo los componentes entregados y su build
+!figma-playground/*
+figma-playground/src/components/*
+!figma-playground/src/components/README.md
+figma-playground/dist/
+
 # Paquetes exportados con el plugin (pueden incluir diseños privados)
 figspec-*.json
 

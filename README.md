@@ -86,6 +86,7 @@ Esas tres carpetas ya vienen en el repositorio, cada una con un README que expli
 | `npm start -- achievements` | Lo mismo con `figspec-achievements.json` |
 | `npm run extract [-- componente]` | Solo genera la salida |
 | `npm run viewer [-- componente]` | Vuelve a generar el visualizador de ese componente (o del último generado) y lo abre |
+| `npm run react [-- componente]` | Lleva el componente a tu proyecto (`FIGMA_REACT_DIR`), con la salida al día (ver abajo) |
 
 El ciclo queda: exportas con el plugin → `npm start` → revisas en el visualizador → si cambias nombres, **Guardar nombres**: se aplican al momento (el extractor los guarda en las decisiones del proyecto y la vista se recarga regenerada), sin descargar nada. El servidor solo escucha en tu máquina y exige una clave que va en la página.
 
@@ -113,7 +114,36 @@ Las clases, los íconos y los componentes toman el nombre de las capas de Figma.
 
 ## Componentes React
 
-Con `--react` se generan, en la subcarpeta del componente (junto a sus CSS Modules y assets):
+### Llevarlo a tu proyecto: `npm run react`
+
+```sh
+FIGMA_REACT_DIR=src/components      # en el .env: dónde van los componentes en tu proyecto
+npm run react -- achievements       # o --to <carpeta>; sin nombre, el último exportado
+```
+
+1. Vuelve a generar la salida con el paquete y las decisiones actuales: lo que se entrega siempre está al día.
+2. Copia la carpeta del componente (`.tsx`, `.module.css`, íconos, imágenes y `tokens.css`) a `FIGMA_REACT_DIR/<Componente>/`, con un manifiesto: en la próxima entrega reemplaza o borra solo lo que generó (tus archivos en esa carpeta no se tocan). Si la carpeta existe y no la generó figspec, no escribe nada (salvo `--force`).
+3. Compara la API con la entrega anterior y avisa: **⚠** lo que puede romper el código que ya usa el componente (un componente o una prop que se quitan, opciones de una variante que cambian) y, aparte, lo que se agrega o cambia por dentro (clases). Si el componente se entregó antes con otro nombre, avisa de la carpeta vieja. `--dry-run` muestra los cambios sin escribir en el destino.
+
+Una vez integrado, el componente es una API que otros usan: renombrar después cambia clases, props o el nombre del componente. Por eso conviene pulir los nombres en el visualizador antes de la primera entrega, y revisar los avisos en cada una.
+
+### Probarlo antes: `figma-playground/`
+
+Un proyecto Vite + React + TypeScript listo para recibir los componentes, dentro del repo. Muestra en una página todos los entregados, cada uno con los valores por defecto de Figma, y se actualiza solo en cada entrega.
+
+```sh
+npm --prefix figma-playground install   # una vez (necesita internet)
+FIGMA_REACT_DIR=figma-playground/src/components   # en el .env
+npm run react -- achievements
+npm run playground                      # abre la página en http://127.0.0.1:5173
+npm --prefix figma-playground run check # tipos (strict) + build de Vite de todo lo entregado
+```
+
+Sirve de referencia para tu proyecto: `src/global.css` tiene lo que los componentes asumen (`box-sizing: border-box` y el suavizado de Figma), y la página carga cada `tokens.css` de forma global. Las fuentes no se cargan: instálalas o agrégalas en `global.css`. Los componentes entregados (`src/components/`) no se versionan.
+
+### Qué se genera
+
+Con `--react` (o `npm run react`) se generan, en la subcarpeta del componente (junto a sus CSS Modules y assets):
 
 - **`<Componente>.tsx`** para la raíz y cada subcomponente, con su CSS Module.
 - **`icons.tsx`**: cada SVG como componente React (los monocromos usan `currentColor`, así que toman el `color` del CSS).

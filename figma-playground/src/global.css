@@ -1,0 +1,13 @@
+/* Lo que los componentes de figspec asumen del proyecto (ver el README de figspec) */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* Figma dibuja el texto con un suavizado más fino que Chrome en macOS */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
