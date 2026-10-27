@@ -38,26 +38,33 @@ carpeta aparte):
 - [ ] Rendimiento con diseños grandes (el paquete del login pesa 3,1 MB por la imagen en base64).
 
 **Decisiones abiertas** (cada una tiene un valor por defecto hoy; confirmar o cambiar):
-- [ ] `aria-current="true"` (genérico) o `"page"` (menús): hoy `"true"` con una nota.
-- [ ] Etiquetas HTML: todo se genera como `div`/`span`; un ítem clicable o deshabilitado debería ser
-  `button` o `a` (con `disabled` real). ¿Inferir el elemento o dejarlo al desarrollador?
-- [ ] Una capa llamada exactamente "Icon" (o "ic", "SVG", "Shape") se trata como nombre genérico y se
-  renombra con el texto vecino (`logsIcon`). ¿Respetarla como nombre del diseñador?
-- [ ] Nombres que sobrevivan a una copia nueva del archivo original: hoy viven en el archivo de
-  Figma (`setPluginData`); alternativa, un archivo de nombres en el repo que lea el extractor.
-- [ ] Devolver los nombres al diseñador: descartado "aplicar en las capas de Figma"; alternativa de
-  ux-ui, un botón "Copiar lista de renombres" (Frame 5 → benefitsItem…) para comentarios o Slack.
-- [ ] `--extract-repeated` es opcional: ¿activarlo por defecto? (riesgo: secciones con la misma
-  estructura que no son una lista).
-- [ ] Inconsistencias del diseño (p. ej. "Pack" y "Logs" con Roboto 500 · 14px en el menú): hoy
-  salen como estados extra (`disabled2`, `default2`) y en `repeated`. ¿Reportarlas aparte para
-  avisarle al diseñador?
-- [ ] Publicación: nombre `figspec` libre en npm; el plugin necesitaría el `id` que asigna Figma al
-  publicarlo (los datos guardados con `setPluginData` dependen de ese id).
-- [ ] Titular de la licencia MIT: hoy `jrodrigopuca`; ¿nombre completo?
-- [ ] Autor de los commits: `jarp <jarp@outlook.com>` (config global de git); si ese correo no está
-  en la cuenta de GitHub, los commits no se vinculan al perfil.
-- [ ] `.gitignore` conserva `.figspec-cache/` de la versión con API: se puede quitar.
+- [x] `aria-current="true"` (genérico) o `"page"` (menús). **Decidido: se queda `"true"` con la
+  nota.** El tipo de lista (navegación, pasos, fecha) no se puede extraer de Figma; se podría
+  preguntar en la ventana del plugin (un selector por grupo repetido), pero aporta poco (el lector
+  de pantalla dice "página actual" en vez de "actual"). Retomar solo si hace falta.
+- [x] Etiquetas HTML: todo se genera como `div`/`span`. **Decidido (2026-10-26): no inferir**
+  `button`/`a`; el elemento interactivo lo elige el desarrollador al usar el componente.
+- [x] Una capa llamada exactamente "Icon" (o "ic", "SVG", "Shape") se trata como nombre genérico.
+  **Decidido: se mantiene** (las excepciones se corrigen en la ventana del plugin).
+- [ ] Nombres que sobrevivan a una copia nueva del archivo original. **Pospuesto:** primero asegurar
+  que se generen bien los componentes; después, iterar y versionar los exports. Idea del usuario:
+  guardar en lo exportado los nombres originales y un objeto que mapee cada cambio (nombre de
+  Figma → nombre en código), para poder reaplicarlo en exportaciones siguientes.
+- [x] Devolver los nombres al diseñador ("Copiar lista de renombres"). **Descartado:** no aporta al
+  trabajo de UX.
+- [x] `--extract-repeated`: **Decidido: sigue siendo opcional** (se activa con la opción o con
+  `FIGMA_EXTRACT_REPEATED=true`).
+- [x] Inconsistencias del diseño. **Decidido e implementado:** `inconsistencies.md` aparte (solo si
+  hay alguna), para que el desarrollador lo lleve a UX: (1) ítems repetidos que difieren solo en
+  tipografía ("Pack" y "Logs" en el menú real: Roboto · 500 · 14px en vez de Geist · 700 · 12px, sin
+  el estilo `default-bold`), (2) colores escritos a mano que coinciden con un estilo o variable,
+  (3) textos con los valores de un estilo de texto que no lo aplican. 4 pruebas.
+- [ ] Publicación (npm `figspec`, plugin en Figma Community). **Pospuesto:** es pronto; antes hay
+  que probarlo más en entornos reales. (Al publicar el plugin cambia su `id`, y los nombres guardados
+  con `setPluginData` dependen de ese id.)
+- [x] Titular de la licencia MIT: `jrodrigopuca`. **Decidido: se queda así.**
+- [x] Autor de los commits: `jarp <jarp@outlook.com>`. **Decidido: es correcto.**
+- [x] `.gitignore` conservaba `.figspec-cache/` de la versión con API: **quitado**.
 
 **Funcionalidad**
 - [x] `aria-current` / `aria-disabled` deducidos del nombre del estado: palabra `active`/`current`/
@@ -90,6 +97,9 @@ carpeta aparte):
 - [ ] Capas de texto con datos de ejemplo ("Juan Pérez") conservan ese nombre de clase cuando no se
   extraen los repetidos.
 - [ ] Variantes con capas homónimas reordenadas: se emparejan por posición.
+- [ ] Entre variantes, los textos que Figma nombra con su contenido ("Enviar" / "Cargando…") no se
+  emparejan: la estructura se considera distinta (no hay `variantText` ni extracción de repetidos).
+  Con capas de texto con nombre propio ("Label") funciona.
 - [ ] Rotaciones: dentro de auto layout la caja rotada no reserva espacio en CSS; hijos absolutos de
   un padre rotado pueden quedar desplazados; las capas espejadas no se reflejan (hay notas).
 - [ ] Textos centrados verticalmente con partes de estilo distinto se dejan arriba (hay nota).

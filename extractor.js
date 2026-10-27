@@ -135,6 +135,7 @@ const ctx = {
 	namesUsed: new Set(), // ids de namesById que se aplicaron (para avisar de los sobrantes)
 	elSignature: new WeakMap(), // elemento de structure → firma estructural de su capa
 	elId: new WeakMap(), // elemento de structure → id de su capa en Figma
+	inconsistencies: [], // posibles errores del diseño, para inconsistencies.md
 	statesById: new Map(), // id de un ítem repetido → nombre de estado elegido en el plugin
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
@@ -216,6 +217,8 @@ function main() {
 	for (const comp of [component, ...Object.values(subcomponents)]) {
 		const aria = ariaFor(comp);
 		if (aria.length) comp.aria = aria;
+		unstyledColors(comp);
+		unappliedTextStyles(comp);
 	}
 	// Una respuesta de /nodes (API REST) no trae los archivos: las rutas quedarían sin archivo
 	if (!ctx.bundle && opts.assets && (ctx.icons.size || ctx.imageRefs.size)) {
@@ -285,6 +288,13 @@ function main() {
 		require(path.join(__dirname, "react.js")).generateReact(outDir, part, (name, content) =>
 			write(`${part}/${name}`, content, (s) => s),
 		);
+	// Posibles inconsistencias del diseño, aparte: el desarrollador se lo puede llevar a UX
+	if (ctx.inconsistencies.length) {
+		write("inconsistencies.md", inconsistenciesReport(component), (s) => s);
+		console.error(
+			`… ${ctx.inconsistencies.length} posible(s) inconsistencia(s) del diseño: ${outDir}/inconsistencies.md`,
+		);
+	}
 	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
@@ -2040,8 +2050,204 @@ function describeRepeated(parent, items, comp) {
 	}
 	const rep = { parent: parent.className, items: items.map((e) => e.className) };
 	if (Object.keys(varies).length) rep.varies = varies;
-	if (groups.size > 1) rep.styleGroups = [...groups.values()];
+	if (groups.size > 1) {
+		rep.styleGroups = [...groups.values()];
+		typographyOnly(comp, parent, items, rep.styleGroups);
+	}
 	return rep;
+}
+
+// ---------------------------------------------------------------- inconsistencias del diseño
+// Diferencias que suelen ser un estilo no aplicado más que una decisión de diseño. No son errores
+// seguros: van a inconsistencies.md para revisarlas con quien diseñó el componente.
+const TYPOGRAPHY = new Set([
+	"font-family", "font-weight", "font-size", "line-height", "letter-spacing", "font-style",
+	"text-transform", "text-decoration",
+]);
+
+// Texto visible de un elemento (o el primero de su contenido), para nombrarlo en el informe
+function elLabel(el) {
+	if (el.tag === "span") {
+		const t = el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
+		if (t) return t;
+	}
+	for (const c of el.children || []) {
+		const t = c.tag === "span" ? elLabel(c) : null;
+		if (t) return t;
+	}
+	for (const c of el.children || []) {
+		const t = elLabel(c);
+		if (t && t !== c.name) return t;
+	}
+	return el.name;
+}
+
+// 1. Ítems repetidos cuyos grupos de estilo difieren solo en tipografía: suele ser un estilo de
+//    texto que no se aplicó en algunos (en el menú real: "Pack" y "Logs" con otra fuente)
+function typographyOnly(comp, parent, items, groups) {
+	const styleOf = (el) => (comp.styles || {})[el.className] || {};
+	const byCls = (c) => items.find((i) => i.className === c);
+	const diff = (a, b) => {
+		const out = [];
+		(function cmp(x, y) {
+			const sx = styleOf(x);
+			const sy = styleOf(y);
+			for (const k of new Set([...Object.keys(sx), ...Object.keys(sy)]))
+				if (sx[k] !== sy[k] && !(x.tag === "svg" && (k === "width" || k === "height")))
+					out.push({ el: x, other: y, prop: k, a: sx[k], b: sy[k] });
+			const n = Math.min((x.children || []).length, (y.children || []).length);
+			for (let i = 0; i < n; i++) cmp(x.children[i], y.children[i]);
+		})(a, b);
+		return out;
+	};
+	for (let i = 0; i < groups.length; i++)
+		for (let j = i + 1; j < groups.length; j++) {
+			const d = diff(byCls(groups[i][0]), byCls(groups[j][0]));
+			if (!d.length || !d.every((x) => TYPOGRAPHY.has(x.prop))) continue;
+			// Se reporta el grupo con menos ítems como el distinto
+			const [few, many, flip] =
+				groups[i].length < groups[j].length ? [groups[i], groups[j], false] : [groups[j], groups[i], true];
+			ctx.inconsistencies.push({
+				kind: "typography",
+				component: comp.figmaName,
+				parent: parent.name,
+				items: few.map((c) => elLabel(byCls(c))),
+				others: many.map((c) => elLabel(byCls(c))),
+				changes: d.map((x) => ({
+					layer: (flip ? x.other : x.el).name,
+					prop: x.prop,
+					value: flip ? x.b : x.a,
+					usual: flip ? x.a : x.b,
+					style: (flip ? x.el : x.other).textStyle || null,
+				})),
+			});
+		}
+}
+
+// Recorre la estructura de un componente con su elemento y clase
+function eachEl(comp, fn) {
+	(function walk(el) {
+		fn(el);
+		(el.children || []).forEach(walk);
+	})(comp.structure);
+}
+
+// Quita las expresiones var(...) (con paréntesis anidados), para buscar valores sueltos
+function withoutVars(s) {
+	let out = "";
+	for (let i = 0; i < s.length; i++) {
+		if (s.startsWith("var(", i)) {
+			let depth = 0;
+			for (; i < s.length; i++) {
+				if (s[i] === "(") depth++;
+				else if (s[i] === ")" && --depth === 0) break;
+			}
+			continue;
+		}
+		out += s[i];
+	}
+	return out;
+}
+
+// 2. Colores escritos a mano que coinciden con un estilo o variable del mismo archivo
+function unstyledColors(comp) {
+	const byValue = new Map();
+	for (const [name, value] of ctx.tokens) {
+		const v = String(value).toUpperCase();
+		if (!byValue.has(v)) byValue.set(v, []);
+		byValue.get(v).push(name.replace(/^--/, ""));
+	}
+	if (!byValue.size) return;
+	eachEl(comp, (el) => {
+		for (const [prop, value] of Object.entries((comp.styles || {})[el.className] || {}))
+			for (const color of withoutVars(String(value)).match(/#[0-9a-f]{6}\b|rgba?\([^)]*\)/gi) || []) {
+				const tokens = byValue.get(color.toUpperCase());
+				if (tokens)
+					ctx.inconsistencies.push({
+						kind: "color",
+						component: comp.figmaName,
+						layer: el.name,
+						cls: el.className,
+						prop,
+						value: color,
+						tokens,
+					});
+			}
+	});
+}
+
+// 3. Textos con exactamente los valores de un estilo de texto, pero sin tenerlo aplicado
+function unappliedTextStyles(comp) {
+	const named = Object.entries(ctx.textStyles);
+	if (!named.length) return;
+	eachEl(comp, (el) => {
+		if (el.tag !== "span" || el.textStyle) return;
+		const css = (comp.styles || {})[el.className] || {};
+		const match = named.find(
+			([, font]) =>
+				Object.keys(font).length && Object.entries(font).every(([k, v]) => css[k] === v),
+		);
+		if (match)
+			ctx.inconsistencies.push({
+				kind: "textStyle",
+				component: comp.figmaName,
+				layer: el.name,
+				text: elLabel(el),
+				style: match[0],
+			});
+	});
+}
+
+function inconsistenciesReport(root) {
+	const by = (k) => ctx.inconsistencies.filter((x) => x.kind === k);
+	const q = (s) => `«${s}»`;
+	const list = (xs) => xs.map(q).join(", ");
+	const out = [
+		`# Posibles inconsistencias del diseño — ${root.figmaName}`,
+		"",
+		"Generado por figspec a partir de Figma. No son errores seguros: son diferencias que suelen",
+		"deberse a un estilo que no se aplicó. Conviene revisarlas con quien diseñó el componente.",
+	];
+	const typo = by("typography");
+	if (typo.length) {
+		out.push("", "## Elementos repetidos que difieren solo en tipografía", "");
+		// "Roboto · 500 · 14px en vez de Geist · 700 · 12px" (en el orden en que se lee una fuente)
+		const font = (changes, key) =>
+			[...TYPOGRAPHY]
+				.map((p) => changes.find((c) => c.prop === p))
+				.filter(Boolean)
+				.map((c) => String(c[key] ?? "sin valor").replace(/"/g, ""))
+				.join(" · ");
+		for (const t of typo) {
+			const what = `${font(t.changes, "value")} en vez de ${font(t.changes, "usual")}`;
+			const style = t.changes.find((c) => c.style);
+			out.push(
+				`- En ${q(t.parent)} (${t.component}): ${list(t.items)} ${t.items.length > 1 ? "usan" : "usa"} ${what}, a diferencia de ${list(t.others)}.` +
+					(style ? ` Los demás tienen el estilo de texto ${q(style.style)}.` : ""),
+			);
+		}
+	}
+	const colors = by("color");
+	if (colors.length) {
+		out.push("", "## Colores sin estilo que coinciden con un estilo o variable", "");
+		const seen = new Map();
+		for (const c of colors) {
+			const k = `${c.value}|${c.tokens.join()}`;
+			if (!seen.has(k)) seen.set(k, { ...c, layers: [] });
+			seen.get(k).layers.push(c.layer);
+		}
+		for (const c of seen.values())
+			out.push(
+				`- ${c.value} está escrito a mano en ${list([...new Set(c.layers)])} (${c.component}); coincide con ${list(c.tokens)}.`,
+			);
+	}
+	const styles = by("textStyle");
+	if (styles.length) {
+		out.push("", "## Textos con los valores de un estilo de texto que no lo aplican", "");
+		for (const s of styles)
+			out.push(`- ${q(s.text)} (capa ${q(s.layer)}, ${s.component}) tiene los valores de ${q(s.style)} sin aplicar el estilo.`);
+	}
+	return out.join("\n") + "\n";
 }
 
 // Clave de los estilos de un ítem y todo su contenido, para agrupar los que se ven igual. El tamaño

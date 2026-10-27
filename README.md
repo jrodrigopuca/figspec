@@ -120,6 +120,7 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 - Las instancias de otros componentes reciben su ubicación (tamaño, flex, posición) vía `className` desde el módulo del padre.
 - Los íconos monocromos usan `currentColor`: su color sale de `color` en CSS, siempre que el SVG vaya inline (por ejemplo, con SVGR).
 - `component.json` incluye `meta.notes` con las convenciones y aproximaciones aplicadas a ese componente.
+- `inconsistencies.md` (solo si hay alguna) lista posibles errores del diseño para revisar con UX: elementos repetidos que difieren solo en tipografía, colores escritos a mano que coinciden con un estilo o variable, y textos con los valores de un estilo de texto que no lo aplican. Usa los nombres de capa de Figma para que sea fácil encontrarlos.
 - Si el texto se ve más grueso que en Figma (Chrome en macOS), agrega en tu CSS global `-webkit-font-smoothing: antialiased`: Figma dibuja el texto con un suavizado más fino. Es una decisión de tu proyecto, no del componente.
 - `repeated` señala grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas): qué cambia entre ellos (`varies`) y cuáles comparten estilos (`styleGroups`, posibles estados). Son candidatos a un subcomponente con `items.map(...)`, y sirven para detectar inconsistencias del diseño.
 

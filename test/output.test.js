@@ -204,3 +204,34 @@ test("items.map: ítems intercalados con otros elementos quedan como instancias 
 	for (const l of ["A1", "B1", "C1"]) assert.match(tsx, new RegExp(`<Tab className=\\{styles\\.item\\} label="${l}" \\/>`));
 	assert.doesNotMatch(tsx, /\.map\(/);
 });
+
+// ---------------------------------------------------------------- inconsistencias del diseño
+const report = (r) => {
+	const f = path.join(r.out, "inconsistencies.md");
+	return fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null;
+};
+
+test("inconsistencias: ítems repetidos que difieren solo en tipografía", () => {
+	const item = (s, style) => F("Item", "HORIZONTAL", [T(s, { fontFamily: "Inter", fontWeight: 700, ...style })]);
+	const r = extract(F("Menu", "VERTICAL", [item("Uno"), item("Dos"), item("Tres", { fontFamily: "Roboto", fontWeight: 500 })]));
+	assert.match(report(r), /«Tres» usa Roboto · 500 en vez de Inter · 700, a diferencia de «Uno», «Dos»/);
+});
+
+test("inconsistencias: color escrito a mano que coincide con un estilo", () => {
+	const red = [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }];
+	const doc = F("Card", "VERTICAL", [F("Con estilo", "NONE", [], { fills: red, styles: { fill: "S:1" } }), F("Sin estilo", "NONE", [], { fills: red })]);
+	const r = extract({ nodes: { [doc.id]: { document: doc, styles: { "S:1": { name: "Brand/Red", styleType: "FILL" } } } } });
+	assert.match(report(r), /#FF0000 está escrito a mano en «Sin estilo» \(Card\); coincide con «brand-red»/);
+});
+
+test("inconsistencias: texto con los valores de un estilo de texto sin aplicarlo", () => {
+	const font = { fontFamily: "Inter", fontWeight: 400, fontSize: 14 };
+	const doc = F("Card", "VERTICAL", [{ ...T("Título", font), styles: { text: "S:2" } }, T("Suelto", font)]);
+	const r = extract({ nodes: { [doc.id]: { document: doc, styles: { "S:2": { name: "Body", styleType: "TEXT" } } } } });
+	assert.match(report(r), /«Suelto» \(capa «Suelto», Card\) tiene los valores de «Body» sin aplicar el estilo/);
+	assert.doesNotMatch(report(r), /«Título»/, "el que tiene el estilo aplicado no se reporta");
+});
+
+test("inconsistencias: sin ninguna no se escribe el archivo", () => {
+	assert.equal(report(extract(F("Card", "VERTICAL", [T("Hola")]))), null);
+});
