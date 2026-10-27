@@ -90,94 +90,63 @@ carpeta aparte):
   de props según la variante, solo se reportan. En el padre con variantes no se usa `items.map`
   (cada ítem tiene su clase para `variantProps`).
 
-- [ ] **Visualizador** (diseño revisado por ux-ui y architect; decisiones aprobadas el 2026-10-26).
-  `viewer.html` autocontenido para comparar el componente generado con la `preview.png` de Figma y
-  entender qué se generó. Lo usan dev y UX (doble clic).
-  _Decidido (2026-10-26):_ no se genera siempre; archivo propio (separado del extractor); primera
-  entrega = fases 1 y 2.
-  _Diseño (ux-ui):_ tres zonas fijas (árbol · lienzo · inspector); modos Render / Figma / Lado a
-  lado / Superponer (parpadeo con Espacio) / Diferencia (mix-blend-mode, "Realzar"); clic en el
-  lienzo selecciona la capa en cualquier modo y su caja se dibuja también sobre la preview; árbol con
-  nombre de Figma o clase, instancias ◆, renombres; inspector con caja medida y CSS por origen
-  (base, variante, ubicación desde el padre) con tokens como chips; interruptor "Código" apagado
-  por defecto (vista para UX); avisos de integridad (fuentes no instaladas, preview translúcida).
-  _Arquitectura (architect):_ `viewer.js` (Node: CLI `node viewer.js <salida>` y
-  `generateViewer()` para `--viewer` del extractor; se registra en el manifiesto) +
-  `viewer-client.js` (navegador, probable en Node). Fidelidad: el CSS es el de los `.module.css`
-  ya escritos, solo con clases prefijadas (un solo intérprete: el navegador), render en Shadow DOM;
-  la lógica de estructura se comparte con `react.js` extrayendo un `spec.js` (salida de react.js
-  idéntica byte a byte) más prueba de paridad de condiciones. Alineación exacta con
-  `meta.preview` (offset = caja del nodo − absoluteRenderBounds, × escala; verificado: menu mobile
-  offset 16,12 en 344×924 = preview.png; login 0,0 en 1440×900). `meta.format: 1` en component.json. Pruebas con node --test (render,
-  prefijado de CSS, paridad, integración, hit-test); captura visual manual opcional.
-  _Plan:_ ~~1 meta.format/meta.preview~~ (hecho: `meta.format: 1` siempre, `meta.preview` con el
-  PNG del plugin; salida idéntica a la anterior fuera de `meta`) · ~~2 spec.js~~ (hecho: `spec.js` con la
-  interpretación compartida — condiciones, casos por variante, estructura activa, valores por
-  defecto, grupos para `.map`, nombres —; react.js lo usa y su salida es idéntica byte a byte en
-  los 24 casos de prueba y reales; `test/spec.test.js` evalúa el TSX generado y comprueba la
-  paridad, también con casos superpuestos) · ~~3 esqueleto viewer.js~~ (hecho: `viewer.js` con CLI y
-  `--viewer`/`FIGMA_VIEWER` en el extractor, registrado en el manifiesto; `viewer-client.js` y
-  `viewer.css` insertados en el HTML; datos en `<script type="application/json">` sin `<`
-  literal; SVG como texto y el resto en base64; `url()` del CSS → `asset:<ruta>`; CSS prefijado
-  `Comp__clase` y tokens en `:host` dentro del Shadow DOM; zoom con un contenedor ya escalado;
-  error claro si `meta.format` no es 1; probado en Chrome con menu mobile 361 KB, login 3 MB y
-  un caso sin vista previa; 11 pruebas en `test/viewer.test.js`) · ~~4 render real~~ (hecho: `renderTree` arma un árbol virtual
-  con la lógica de `spec.js` y `mount` lo pasa al Shadow DOM; base `all: initial` +
-  `box-sizing: border-box` como asume el extractor; selector Render / Figma; el componente sobre
-  la vista previa en `meta.preview.offset`. Validado: el HTML es igual al de React
-  (`renderToStaticMarkup` del .tsx generado, clases y atributos normalizados) en las 24 salidas
-  de prueba y reales, en cada combinación de variantes de la raíz y con booleanos y textos
-  cambiados, incluido un set sintético State × Size con texto, prop de instancia y estructura por
-  variante, y aria; en Chrome, menu mobile y login caen exactos sobre la vista previa; las
-  diferencias son las fuentes no instaladas y el fondo translúcido. 6 pruebas de render en
-  `test/viewer.test.js`; el arnés con React vive fuera del repo porque necesita React) · ~~5 comparación~~ (hecho: Lado a lado (por defecto), Superponer con
-  opacidad y parpadeo con Espacio, Diferencia con `mix-blend-mode: difference` sobre fondo blanco
-  y "Realzar" (`brightness(4)` sobre el grupo), Render y Figma; misma escala y origen; el modo se
-  recuerda en localStorage (con try/catch); sin vista previa solo Render, con el motivo en los
-  demás. Validado en Chrome con menu mobile y login: en Diferencia coinciden cajas, íconos e
-  imagen, y se destacan los textos por las fuentes no instaladas; parpadeo y modo guardado
-  comprobados con eventos simulados; tema claro y ancho de 800px revisados) · ~~6 árbol + hit-test~~ (hecho: `treeModel` arma las capas desde el
-  render (la instancia es una capa ◆ con su estructura en gris, plegada); `treeLabel` da el nombre
-  de Figma (textos por contenido) o, con el interruptor Código, clase/componente, más `{prop}` y
-  `si {prop}`; `hitTest` elige la más profunda (entre iguales, la de encima) con las cajas de
-  cada elemento; el clic funciona en todos los modos, también sobre la imagen de Figma y en el
-  panel izquierdo de lado a lado; cajas de hover y selección en ambos paneles con borde que no
-  cambia con el zoom; Esc sube; teclado en el árbol; ruta y clase en el panel derecho. Validado
-  en Chrome con eventos simulados (clic sobre "Dashboard" en el panel de Figma, Esc, Código,
-  desplegar una instancia) y arranque de las 24 salidas; 4 pruebas nuevas) · ~~7 inspector~~ (hecho: ruta, caja medida desde la esquina del
-  componente, texto y prop de origen, instancia con sus props; con Código, `cssGroups` arma el CSS
-  por origen —base, variante que aplica, ubicación desde el padre— con el archivo y el selector
-  real de `moduleCss`, tokens como chips con muestra de color y conmutador nombre/valor, "(se
-  quita en esta variante)" para `unset`, y Copiar CSS. Validado: los 325 grupos de todas las
-  capas de las 24 salidas, en cada combinación de variantes, tienen su selector en el
-  .module.css; en Chrome con menu mobile (token --black-00) y una instancia con ubicación desde el
-  padre; 3 pruebas) ·
-  8 ~~aviso de fuentes~~ (adelantado a pedido del usuario el 2026-10-27: `fontFamilies` lee las
-  fuentes del CSS y `fontInstalled` mide un texto con cada una contra monospace, serif y
-  sans-serif en un canvas; aviso arriba con las que faltan. Validado en Chrome: menu mobile → Geist,
-  Inter; login → Geist, Pacifico; Roboto instalada no aparece; 2 pruebas) + README.
-  _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
-  lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de
-  variantes/props; preview por variante (`figspec: 3`).
-  _Decisiones (aprobadas el 2026-10-26):_ (1) dos archivos viewer.js + viewer-client.js; (2) refactor de react.js
-  a spec.js; (3) meta.format y meta.preview en component.json; (4) viewer.html siempre
-  autocontenido (~3 MB en el login); (5) sin Google Fonts al principio; (6) figmaBox en
-  figma-geometry.json, en 2b; (7) recortes al diseño (panel "Diseño en idioma Figma", ajuste
-  manual, punto ámbar, filtro del árbol, apilado automático); (8) preview por variante = figspec 3.
-  _Decisión pendiente (encontrada en el paso 4):_ el CSS nombra la fuente sin una genérica de
-  respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif). Pasa
-  también en el proyecto, no solo en el visualizador. Opciones: agregar `sans-serif` (o `serif`/
-  `monospace` según una lista de fuentes conocidas) o dejarlo así y avisar (paso 8). Por defecto:
-  sin cambios hasta el paso 8.
-  _Prueba pendiente:_ la paridad con React se comprobó con un arnés fuera del repo (esbuild +
-  react-dom); repetirla cuando cambie `react.js` o `renderTree`, o decidir si se suma como prueba
-  opcional que se salta sin React instalado.
-  _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
-  deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
-  comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una
-  misma clase y propiedad (agrupa por una sola prop o por la combinación completa, nunca ambas).
-  Unificar con `spec.pickCase` cuando se toque esa parte, con una prueba de casos superpuestos.
-  _Límite:_ reproduce el componente desde la misma especificación (mismo CSS), no ejecuta React.
+- [x] **Visualizador, primera entrega (fases 1 y 2)** (2026-10-26/27; diseño de ux-ui revisado por
+  architect). `viewer.html` autocontenido (doble clic, sin red) para comparar el componente
+  generado con la `preview.png` de Figma y entender qué se generó; lo usan dev y UX.
+  _Archivos:_ `viewer.js` (Node: `node viewer.js <salida>` y `--viewer`/`FIGMA_VIEWER` en el
+  extractor, registrado en el manifiesto), `viewer-client.js` (navegador; funciones sin DOM
+  probadas en Node), `viewer.css`, `spec.js` (interpretación de component.json compartida con
+  `react.js`, cuya salida quedó idéntica byte a byte). `meta.format: 1` y `meta.preview` (offset =
+  caja del nodo − absoluteRenderBounds, × escala) en component.json.
+  _Qué hace:_ render en Shadow DOM con los mismos `.module.css` (clases `Comp__clase`, tokens en
+  `:host`, base `all: initial` + `border-box`); modos Lado a lado (por defecto), Superponer
+  (opacidad y parpadeo con Espacio), Diferencia (`mix-blend-mode`, "Realzar"), Render y Figma,
+  con misma escala y origen y el modo recordado; árbol de capas (◆ instancias plegadas, `{prop}`,
+  `si {prop}`), hover y clic con hit-test en cualquier modo y sobre la imagen de Figma, cajas en
+  ambos paneles, Esc sube; inspector con ruta, caja medida, texto, instancia y props; interruptor
+  Código (apagado por defecto) con clases en el árbol y CSS por origen (base, variante,
+  ubicación desde el padre) con selector real, tokens como chips y Copiar CSS; avisos de fuentes
+  no instaladas y de archivos faltantes.
+  _Validado:_ HTML igual al de React (`renderToStaticMarkup` del .tsx) en 24 salidas, cada
+  combinación de variantes y props cambiadas, más un set sintético State × Size; los 325 grupos
+  de CSS del inspector existen en su .module.css; en Chrome: menu mobile y login caen exactos
+  sobre la vista previa, diferencia limpia salvo fuentes y fondo translúcido, eventos simulados
+  (parpadeo, modo guardado, clic, Esc, Código, desplegar instancias), tema claro y 800 px de ancho.
+  Pruebas: `test/spec.test.js` (8) y `test/viewer.test.js` (28).
+  _Decisiones (aprobadas el 2026-10-26):_ dos archivos JS (más `viewer.css`); `spec.js`;
+  `meta.format`/`meta.preview`; siempre autocontenido (~3 MB el login); sin Google Fonts (solo
+  aviso); caja de Figma por nodo en 2b; recortes al diseño (sin panel "Diseño en idioma Figma",
+  sin ajuste manual, sin punto ámbar, sin filtro del árbol, sin apilado automático); vista previa
+  por variante = `figspec: 3`, a decidir en la fase 3.
+  _Límite:_ reproduce el componente desde la misma especificación y el mismo CSS; no ejecuta React.
+
+- [ ] **Visualizador, siguiente entrega (2b en adelante).**
+  - Caja de Figma por capa (`figma-geometry.json`, clave por ruta de índices) y lista de capas
+    desviadas más de 2 px respecto del render.
+  - Controles de variantes y props (fase 3): hoy se ve solo con los valores por defecto. Incluye
+    elegir un subcomponente (sin vista previa propia: "Ver en contexto").
+  - Vista previa por variante: requiere `figspec: 3` en el plugin (decidir en la fase 3).
+  - Inconsistencias clicables: `inconsistencies.md` no apunta a una capa concreta; hace falta la
+    ruta o el id en los datos.
+  - Pestañas de tokens, íconos, notas e inconsistencias (fase 4).
+  - `--fonts <carpeta>` para embeber las fuentes y comparar sin instalarlas.
+  - Zoom automático en componentes chicos: "Ajustar" llega hasta 8× (una tarjeta de 180 px se ve
+    al 420 %); decidir un tope menor para el ajuste inicial. Por defecto: sin cambios.
+  - _Prueba pendiente:_ solo se probó en Chrome. Probar en Safari y Firefox (Shadow DOM,
+    `mix-blend-mode`, `color-mix`, portapapeles en `file://`).
+  - _Prueba pendiente:_ la paridad con React se comprobó con un arnés fuera del repo (esbuild +
+    react-dom); repetirla cuando cambie `react.js` o `renderTree`, o decidir si se suma como prueba
+    opcional que se salta sin React instalado.
+  - _Decisión pendiente (encontrada en el paso 4):_ el CSS nombra la fuente sin una genérica de
+    respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif), en
+    el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
+    una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
+  - _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
+    deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
+    comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una
+    misma clase y propiedad. Unificar con `spec.pickCase` cuando se toque esa parte, con una
+    prueba de casos superpuestos.
+
 **Límites conocidos**
 - [ ] `id` internos de un SVG (clipPath, mask) repetidos si el ícono aparece varias veces.
 - [ ] Props de tipo swap: solo se pasan si el componente referido también se generó, y muestran el

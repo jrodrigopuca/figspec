@@ -6,6 +6,7 @@ Exporta un componente de Figma (y sus subcomponentes) con un plugin y lo convier
 - **`<Componente>.module.css`**: un CSS Module por componente, listo para React.
 - **`tokens.css`**: variables CSS (`:root`) de los tokens usados, con los nombres de estilos y variables de Figma.
 - **`assets/`**: íconos SVG (recoloreables con `currentColor`) e imágenes, y una vista previa `preview.png`.
+- Opcionales: componentes **React** en TypeScript (`--react`) y un **visualizador** `viewer.html` para comparar el resultado con Figma (`--viewer`).
 
 Sin dependencias ni red: el plugin corre dentro de Figma y el extractor es un solo archivo para Node 18+. No usa la API REST de Figma, cuyas cuotas en algunos planes y tipos de asiento son de pocas peticiones al mes.
 
@@ -129,16 +130,18 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 
 ## Visualizador
 
-`viewer.html` muestra el componente junto a la vista previa de Figma, para revisar la salida sin abrir un proyecto. Es un solo archivo con todo adentro (especificación, CSS, íconos, imágenes y vista previa): se abre con doble clic y se puede pasar a otra persona (por ejemplo, a UX) sin la carpeta. No usa la red.
+`viewer.html` muestra el componente generado junto a la vista previa de Figma, para revisar la salida sin abrir un proyecto. Es un solo archivo con todo adentro (especificación, CSS, íconos, imágenes y vista previa): se abre con doble clic en el navegador y se puede pasar a otra persona (por ejemplo, a UX) sin la carpeta. No usa la red.
 
 ```sh
 node extractor.js figspec-<nombre>.json --viewer   # al generar la salida
 node viewer.js figma-menu/                         # o después, sobre una salida ya generada
 ```
 
-Usa los mismos `.module.css` de la salida (con el nombre del componente como prefijo de cada clase) y la misma interpretación de `component.json` que el generador React (`spec.js`), así que lo que muestra es lo que se generó. No ejecuta React. Zoom: `Cmd/Ctrl+0` ajusta al lienzo y `Cmd/Ctrl+1` lo deja al 100 %.
+Dibuja el componente con los mismos `.module.css` de la salida (cada clase con el nombre de su componente como prefijo, para que no choquen) y la misma interpretación de `component.json` que el generador React (`spec.js`): lo que muestra es lo que se generó. No ejecuta React.
 
-Arriba se elige cómo comparar el componente generado (con sus valores por defecto) con la vista previa exportada de Figma. Todos los modos usan la misma escala y el mismo origen: el componente se ubica sobre la vista previa con `meta.preview`, aunque la imagen incluya sombras alrededor.
+### Comparar con Figma
+
+Arriba se elige el modo. Todos usan la misma escala y el mismo origen: el componente se ubica sobre la vista previa con `meta.preview`, aunque la imagen incluya sombras alrededor.
 
 | Modo | Qué muestra |
 |---|---|
@@ -147,17 +150,28 @@ Arriba se elige cómo comparar el componente generado (con sus valores por defec
 | **Diferencia** | Lo que coincide se ve negro y lo distinto, en color; "Realzar diferencias sutiles" aclara las pequeñas |
 | **Render** / **Figma** | Uno solo |
 
-El último modo usado se recuerda. Sin vista previa en el paquete solo está el render. Un componente translúcido (con desenfoque de fondo) se ve distinto en la diferencia: la vista previa incluye lo que había detrás en Figma.
+El último modo usado se recuerda. Zoom con los botones de arriba, `Cmd/Ctrl+0` (ajustar al lienzo) y `Cmd/Ctrl+1` (100 %).
 
-Si una fuente del diseño no está instalada en tu equipo, el visualizador lo avisa arriba: esos textos se ven con otra tipografía (el CSS la nombra sin una genérica de respaldo) y en la comparación aparecen distintos. Instálala para comparar.
+### Capas e inspector
 
-A la izquierda está el árbol de capas del render (▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente, que se despliega para ver su estructura). Al pasar el puntero por el lienzo o por el árbol se marca la capa en los dos; un clic en el lienzo elige la capa más profunda bajo el puntero (en cualquier modo, también sobre la imagen de Figma) y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor; en el árbol se navega con las flechas. A la derecha, el **inspector** de la capa elegida: su ruta (cada parte se puede pulsar), la caja medida en el render (posición desde la esquina del componente, ancho y alto), el texto y de qué prop viene, o, en una instancia, el componente y las props que recibe.
+- **Capas** (izquierda): el árbol del render, con un ícono por tipo: ▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente (se despliega para ver su estructura). Se recorre con las flechas.
+- **Lienzo**: al pasar el puntero se marca la capa, también en el árbol; un clic elige la capa más profunda bajo el puntero, en cualquier modo y también sobre la imagen de Figma, y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor.
+- **Inspector** (derecha): la ruta de la capa (cada parte se puede pulsar), su caja medida en el render (posición desde la esquina del componente, ancho y alto), el texto y de qué prop viene o, en una instancia, el componente y las props que recibe.
 
-El interruptor **Código** (apagado por defecto, pensado para quien revisa el diseño) muestra en el árbol las clases y los componentes en lugar de los nombres de Figma; `{title}` indica un texto que viene de una prop y `si {showIcon}`, una capa que se muestra según una prop.
+### Código
 
-Con **Código**, el inspector muestra además el CSS de la capa tal como está en los `.module.css`, agrupado por origen: la regla base, las de la variante que se está viendo y, en una instancia, su ubicación desde el componente padre; cada grupo con su archivo y su selector. Los tokens se ven como chips con su color ("Ver valores" muestra el valor en lugar del nombre) y "Copiar CSS" copia los grupos. No muestra estilos calculados por el navegador: lo que ves es lo que se generó.
+El interruptor **Código** está apagado por defecto: así la vista sirve a quien revisa el diseño, con los nombres de las capas de Figma. Prendido, muestra lo que necesita quien desarrolla:
 
-En desarrollo: ver la lista de cambios pendientes en [BACKLOG.md](BACKLOG.md) (ver [BACKLOG.md](BACKLOG.md)).
+- En el árbol, las clases (`.label`) y los componentes (`<Tag>`) en lugar de los nombres de Figma; `{title}` marca un texto que viene de una prop y `si {showIcon}`, una capa que se muestra según una prop.
+- En el inspector, el CSS de la capa tal como está en los `.module.css`, agrupado por origen: la regla base, las de la variante que se está viendo y, en una instancia, su ubicación desde el componente padre; cada grupo con su archivo y su selector. Los tokens se ven como chips con su color ("Ver valores" muestra el valor en lugar del nombre) y "Copiar CSS" copia los grupos. No muestra estilos calculados por el navegador.
+
+### Avisos y diferencias esperables
+
+- **Fuentes no instaladas**: el visualizador avisa arriba cuáles faltan en tu equipo. Esos textos se ven con otra tipografía (el CSS nombra la fuente sin una genérica de respaldo) y en la comparación aparecen distintos; instálalas para comparar.
+- **Archivos faltantes**: si la salida estaba incompleta al generarlo, avisa qué íconos o imágenes no se pudieron incluir.
+- **Componentes translúcidos** (con desenfoque de fondo): la vista previa incluye lo que había detrás en Figma, así que el fondo se ve distinto.
+- **Sin vista previa** en el paquete (exportado sin «Vista previa (PNG)»): solo está el modo Render.
+- Por ahora muestra el componente con los valores por defecto de sus props; los controles para cambiar variantes y props están en [BACKLOG.md](BACKLOG.md).
 
 ## Pruebas
 
