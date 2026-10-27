@@ -6,7 +6,7 @@
 // Misma regla que extractor.js para decidir qué se exporta como ícono
 const VECTOR_TYPES = ["VECTOR", "BOOLEAN_OPERATION", "STAR", "REGULAR_POLYGON"];
 
-figma.showUI(__html__, { width: 320, height: 250 });
+figma.showUI(__html__, { width: 320, height: 250, themeColors: true });
 sendSelection();
 figma.on("selectionchange", sendSelection);
 
