@@ -38,6 +38,7 @@ figma-menu/                  carpeta de salida
   component.json             especificación (referencia, para un LLM)
   tokens.css                 tokens globales (opcional)
   preview.png                vista previa
+  figma-geometry.json        caja de Figma de cada capa (para el visualizador)
   viewer.html                visualizador (con --viewer)
   Menu/                      el componente: se copia tal cual a tu proyecto
     Menu.module.css          CSS Module de la raíz
@@ -167,6 +168,12 @@ Sobre el lienzo hay un control por cada prop del componente: una lista para las 
 - **Capas** (izquierda): el árbol del render, con un ícono por tipo: ▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente (se despliega para ver su estructura). Se recorre con las flechas.
 - **Lienzo**: al pasar el puntero se marca la capa, también en el árbol; un clic elige la capa más profunda bajo el puntero, en cualquier modo y también sobre la imagen de Figma, y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor.
 - **Inspector** (derecha): la ruta de la capa (cada parte se puede pulsar), su caja medida en el render (posición desde la esquina del componente, ancho y alto), el texto y de qué prop viene o, en una instancia, el componente y las props que recibe.
+
+### Desvíos de Figma
+
+El visualizador compara la caja de cada capa en el render con su caja en Figma (`figma-geometry.json`, que escribe el extractor) y lista arriba del inspector las que se corren más de 2 px, de mayor a menor ("Benefits · ancho −10", "Producción · x +3"). Las capas corridas llevan ↔ en el árbol. Al elegir una capa, su caja de Figma se dibuja en naranja sobre los dos paneles y el inspector muestra la medida del render, la de Figma y la diferencia.
+
+Vale para la variante que se esté viendo. Las capas internas de una instancia no se comparan (son de otro componente). En los textos, una fuente no instalada cambia el ancho: el visualizador lo aclara.
 
 ### Código
 

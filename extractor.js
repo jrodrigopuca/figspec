@@ -145,6 +145,8 @@ const ctx = {
 	namesUsed: new Set(), // ids de namesById que se aplicaron (para avisar de los sobrantes)
 	elSignature: new WeakMap(), // elemento de structure → firma estructural de su capa
 	elId: new WeakMap(), // elemento de structure → id de su capa en Figma
+	nodeBox: new Map(), // id de una capa → absoluteBoundingBox (para figma-geometry.json)
+	geometry: null, // cajas de Figma por variante del componente principal (ver geometryOf)
 	inconsistencies: [], // posibles errores del diseño, para inconsistencies.md
 	statesById: new Map(), // id de un ítem repetido → nombre de estado elegido en el plugin
 	icons: new Map(), // componentId | node.id → { name, id, file }
@@ -304,6 +306,9 @@ function main() {
 			write(`${part}/${name}`, content, (s) => s),
 		);
 	// Posibles inconsistencias del diseño, aparte: el desarrollador se lo puede llevar a UX
+	// Cajas de Figma por capa (para la lista de desvíos del visualizador)
+	if (ctx.geometry && ctx.geometry.some((v) => Object.keys(v.boxes).length))
+		write("figma-geometry.json", JSON.stringify({ format: 1, node: nodeId, variants: ctx.geometry }) + "\n", (s) => s);
 	if (ctx.inconsistencies.length) {
 		write("inconsistencies.md", inconsistenciesReport(component), (s) => s);
 		console.error(
@@ -566,6 +571,9 @@ function assemble(name, props, variants, defaults, isSub, code) {
 		};
 	}
 
+	// Caja de Figma de cada capa del componente principal, para que el visualizador compare
+	if (!isSub) ctx.geometry = geometryOf(built, d);
+
 	// props referenciadas por capas pero no declaradas (p. ej. si solo tenemos una instancia)
 	for (const b of built)
 		for (const [k, t] of Object.entries(b.bound))
@@ -622,6 +630,35 @@ function assemble(name, props, variants, defaults, isSub, code) {
 		.map((b) => ({ when: b.props, structure: b.structure }));
 	if (other.length) res.variantStructures = other;
 	return res;
+}
+
+// Caja de Figma de cada capa, relativa a la raíz de su variante, por variante: { when, boxes:
+// { id: [x, y, ancho, alto] } }. Las capas se identifican por el id de la variante por defecto
+// (el que lleva structure); en otra variante, la capa con la misma clase (la clase se asigna por
+// ruta, igual en todas). Las de una estructura propia (variantStructures) también por su id.
+// No incluye las capas internas de las instancias: son de otro componente.
+function geometryOf(built, d) {
+	const each = (el, fn) => {
+		fn(el);
+		(el.children || []).forEach((c) => each(c, fn));
+	};
+	const classById = new Map();
+	each(built[d].structure, (e) => classById.set(e.id, e.className));
+	return built.map((b) => {
+		const origin = ctx.nodeBox.get(b.structure.id);
+		const boxes = {};
+		const byClass = new Map();
+		if (origin)
+			each(b.structure, (e) => {
+				const bx = ctx.nodeBox.get(e.id);
+				if (!bx) return;
+				const r = [rd(bx.x - origin.x), rd(bx.y - origin.y), rd(bx.width), rd(bx.height)];
+				if (!byClass.has(e.className)) byClass.set(e.className, r);
+				boxes[e.id] = r;
+			});
+		for (const [id, cls] of classById) if (!(id in boxes) && byClass.has(cls)) boxes[id] = byClass.get(cls);
+		return { when: b.props, boxes };
+	});
 }
 
 // Separa los estilos comunes (base) de los que cambian por variante.
@@ -775,6 +812,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 		);
 
 	const el = { name: node.name, id: node.id };
+	if (node.absoluteBoundingBox) ctx.nodeBox.set(node.id, node.absoluteBoundingBox);
 	ctx.elSignature.set(el, signature(node));
 	ctx.elId.set(el, node.id);
 	const iconLike = !isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node));

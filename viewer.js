@@ -65,6 +65,7 @@ function viewerHtml(outDir) {
 		spec,
 		css,
 		tokens: readText(outDir, "tokens.css"),
+		geometry: readJson(outDir, "figma-geometry.json"),
 		assets,
 		missing,
 		preview: preview && preview.url,
@@ -115,6 +116,16 @@ function rewriteUrls(css, part, refs) {
 		refs.add(rel);
 		return `url("asset:${rel}")`;
 	});
+}
+
+// Cajas de Figma por capa (figma-geometry.json, del extractor); sin el archivo, null
+function readJson(outDir, rel) {
+	const t = readText(outDir, rel);
+	try {
+		return t === null ? null : JSON.parse(t);
+	} catch {
+		return null;
+	}
 }
 
 function readText(outDir, rel) {

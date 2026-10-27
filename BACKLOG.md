@@ -121,8 +121,18 @@ carpeta aparte):
   _Límite:_ reproduce el componente desde la misma especificación y el mismo CSS; no ejecuta React.
 
 - [ ] **Visualizador, siguiente entrega (2b en adelante).**
-  - Caja de Figma por capa (`figma-geometry.json`, clave por ruta de índices) y lista de capas
-    desviadas más de 2 px respecto del render.
+  - [x] Desvíos de posición (2026-10-27). El extractor escribe `figma-geometry.json` (`format: 1`,
+    por variante `{ when, boxes: { id: [x, y, ancho, alto] } }`, relativo a la raíz de la
+    variante; en otra variante, la capa con la misma clase; registrado en el manifiesto). Se usó
+    el id de la capa en lugar de la ruta de índices que se había previsto: ya está en
+    component.json y no depende del orden. El visualizador lista las capas corridas más de 2 px
+    (de mayor a menor, elegibles), marca ↔ en el árbol, dibuja la caja de Figma en naranja y
+    muestra render / Figma / Δ en el inspector. Validado en Chrome: menu mobile y login solo
+    marcan anchos de texto (fuentes no instaladas); el set sintético coincide en Default+S y
+    Active+L; un padding de más agregado a propósito aparece como "x +3"; 4 pruebas.
+    _Límites:_ no compara las capas internas de las instancias (son de otro componente; habría
+    que ubicarlas por instancia); umbral fijo de 2 px; los anchos de texto dependen de las
+    fuentes instaladas.
   - [x] Controles de variantes y props (fase 3, 2026-10-27): un control por prop (lista, casilla o
     campo), Restablecer, selección y desplegado conservados por clave de capa; subcomponente
     suelto con el tamaño y los valores de su primera instancia, y "Ver en contexto". En un set,
@@ -163,10 +173,23 @@ carpeta aparte):
     el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
     una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
   - _Visualizador como editor (idea del usuario, 2026-10-27), lo que sigue:_
-    1. Llevar las decisiones a Figma: "Importar decisiones" en el plugin, que guarde los nombres
-       con `setPluginData` (hoy viven solo en el archivo). _Decisión pendiente:_ si los nombres
-       deben tener una sola fuente (Figma) o alcanza con el archivo junto al paquete. Por
-       defecto: el archivo, hasta que se pida.
+    1. _Futuro lejano (decidido por el usuario el 2026-10-27):_ llevar las decisiones a Figma
+       ("Importar decisiones" en el plugin, con `setPluginData`). Escribir en el archivo de Figma
+       afecta a otras personas cuando se trabaja en equipo y puede exceder el alcance de quien
+       exporta; sirve para trabajar solo. Por ahora los nombres viven en el archivo de decisiones,
+       junto al paquete.
+    1b. _Decidido (2026-10-27): se deja como está._ El plugin guarda en el archivo de Figma los
+       nombres elegidos en su ventana (`setPluginData` al exportar: `figspec.name` en la raíz y en
+       cada capa listada, también vacías, y `figspec.state` en los ítems repetidos). No cambia
+       nada visible ni nada con lo que trabaja UX/UI (capas, nombres, estilos, estructura); sí es
+       una edición del archivo (sincroniza, entra en el historial, suma un paso de deshacer a
+       quien exporta). Es lo único que escribe: ⌖ solo mueve la vista y la selección no cambia.
+       _Prueba pendiente en Figma real:_ si guardar esos datos marca un componente de biblioteca
+       como "cambios sin publicar" o cuenta como modificación en capas dentro de una instancia.
+       _Posibilidad a futuro:_ dejar de escribir y recordar los nombres en `figma.clientStorage`
+       (local y privado; no se comparte, se pierde al cambiar de equipo y la clave sería id + nombre
+       del nodo porque `fileKey` no está disponible) más "Cargar decisiones" en el plugin, que lee
+       el archivo de decisiones para llenar la ventana (se comparte y no edita Figma).
     2. Renombrar los estados de los ítems repetidos (`names.states`) y los subcomponentes desde
        el visualizador: el archivo ya admite `states`; falta la interfaz. Los nombres de los
        subcomponentes de Figma no se pueden cambiar todavía (ni en el plugin).

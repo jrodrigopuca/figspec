@@ -424,6 +424,44 @@ function previewFor(data, compName, values) {
 	return { offset, crop, exact: !changed, reason: changed ? "props" : null };
 }
 
+// ---------------------------------------------------------------- desvíos de posición
+// Diferencia en px a partir de la cual una capa se marca como corrida respecto de Figma
+const DEVIATION_PX = 2;
+
+// Cajas de Figma de lo que se dibuja: las de la variante con esos valores (solo el componente
+// principal); null si no hay datos o no corresponden
+function geometryFor(data, compName, values) {
+	const g = data.geometry;
+	const root = data.spec.component;
+	if (!g || !g.variants || compName !== root.name) return null;
+	const v = { ...spec.propDefaults(root) };
+	for (const [k, x] of Object.entries(values || {})) if (x !== undefined) v[k] = x;
+	const variantProps = Object.keys(root.props || {}).filter((k) => root.props[k].type === "variant");
+	const match = g.variants.find((x) => variantProps.every((k) => x.when[k] === undefined || String(x.when[k]) === String(v[k])));
+	return match ? match.boxes : null;
+}
+
+// Capas corridas: compara la caja medida en el render con la de Figma (ambas relativas a la
+// esquina del componente). items: [{ layer, render: {x,y,width,height}, figma: [x,y,w,h] }].
+// Devuelve las que superan el umbral, de mayor a menor diferencia, con { dx, dy, dw, dh, max }.
+function deviations(items, threshold = DEVIATION_PX) {
+	const out = [];
+	for (const it of items) {
+		if (!it.render || !it.figma) continue;
+		const [x, y, w, hgt] = it.figma;
+		const d = { dx: it.render.x - x, dy: it.render.y - y, dw: it.render.width - w, dh: it.render.height - hgt };
+		const max = Math.max(...Object.values(d).map(Math.abs));
+		if (max > threshold) out.push({ ...it, ...d, max });
+	}
+	return out.sort((a, b) => b.max - a.max);
+}
+
+// Texto corto de una diferencia: "x +3 · alto −12" (solo lo que supera el umbral)
+function deviationText(d, threshold = DEVIATION_PX) {
+	const fmt = (n) => `${n > 0 ? "+" : "−"}${Math.round(Math.abs(n) * 10) / 10}`;
+	return [["x", d.dx], ["y", d.dy], ["ancho", d.dw], ["alto", d.dh]].filter(([, n]) => Math.abs(n) > threshold).map(([k, n]) => `${k} ${fmt(n)}`).join(" · ");
+}
+
 // ---------------------------------------------------------------- decisiones (renombrar)
 // Clase que dará el extractor a un nombre (como classFor: camelCase, sin empezar con número, sin
 // "root"); si ya está tomada, el extractor le agrega un número
@@ -603,6 +641,9 @@ function boot(doc, data) {
 	// Qué se dibuja: un componente (la raíz o un subcomponente) con los valores elegidos
 	const view = { comp: rootName, values: {} };
 	let pv = previewFor(data, rootName, {});
+	let figmaBoxes = null; // cajas de Figma de la variante que se ve (figma-geometry.json)
+	let devs = []; // capas corridas respecto de Figma
+	const devOf = new Map();
 
 	// Escenario con dos paneles del mismo tamaño: la vista previa de Figma y el componente en su
 	// Shadow DOM, en la posición que indica meta.preview.offset (la imagen puede incluir sombras)
@@ -648,6 +689,13 @@ function boot(doc, data) {
 		const r = el.getBoundingClientRect();
 		const hr = host.getBoundingClientRect();
 		return { x: (r.left - hr.left) / zoom + hostX, y: (r.top - hr.top) / zoom + hostY, width: r.width / zoom, height: r.height / zoom };
+	}
+	// Caja de Figma de una capa (relativa a la esquina del componente); solo las del componente
+	// principal, no las internas de una instancia
+	function figmaBoxOf(layer) {
+		if (!figmaBoxes || !layer || layer.inside) return null;
+		const el = layer.node.instance ? layer.node.instance.el : layer.node.el;
+		return (el.id && figmaBoxes[el.id]) || null;
 	}
 	const marks = h("div", { class: "fv-marks", "aria-hidden": "true" });
 	stage.append(marks);
@@ -727,6 +775,11 @@ function boot(doc, data) {
 		const l = modeLayout(mode, box);
 		const offsets = mode === "side" ? [0, l.renderX] : [0];
 		const boxes = [];
+		// Dónde está la capa elegida en Figma (en otro color), para ver el corrimiento
+		const fb = figmaBoxOf(selected);
+		if (fb)
+			for (const dx of offsets)
+				boxes.push(h("div", { class: "fv-mark fv-mark-figma", style: `left:${hostX + fb[0] + dx}px;top:${hostY + fb[1]}px;width:${fb[2]}px;height:${fb[3]}px` }));
 		for (const [layer, cls] of [[hovered, "fv-mark-hover"], [selected, "fv-mark-sel"]]) {
 			if (!layer || (layer === hovered && hovered === selected && cls === "fv-mark-hover")) continue;
 			const r = rectOf(layer);
@@ -780,6 +833,7 @@ function boot(doc, data) {
 				h("span", { class: "fv-toggle", text: has ? (isOpen(layer) ? "▾" : "▸") : "", onclick: (e) => { e.stopPropagation(); toggle(layer); } }),
 				h("span", { class: `fv-kind fv-kind-${layer.kind}`, text: lab.icon }),
 				renamedName(layer, lab),
+				devOf.has(layer) && h("span", { class: "fv-dev", title: `Corrida respecto de Figma: ${deviationText(devOf.get(layer))}`, text: "↔" }),
 				lab.sub && h("span", { class: "fv-sub", text: lab.sub }),
 				lab.tags.map((t) => h("span", { class: "fv-tag", text: t })),
 			);
@@ -847,6 +901,7 @@ function boot(doc, data) {
 	// ---------------------------------------------------------------- renombrar
 	// Los nombres nuevos se juntan en pending y se descargan como archivo de decisiones para el
 	// extractor (--decisions). Se guardan en el navegador para no perderlos al recargar.
+	const fontsMissing = missingFonts(doc, Object.values(data.css || {}));
 	const DEC_KEY = `figspec.viewer.decisions.${(meta.source && meta.source.node) || rootName}`;
 	let pending = { byId: {} };
 	try {
@@ -981,6 +1036,46 @@ function boot(doc, data) {
 		button.textContent = "Copiado";
 		setTimeout(() => (button.textContent = old), 1200);
 	}
+	// Caja medida en el render y, si se sabe, la de Figma con la diferencia
+	function boxSection(m, fb) {
+		if (!fb)
+			return section("Caja", pairs([["X", `${round(m.x)} px`], ["Y", `${round(m.y)} px`], ["Ancho", `${round(m.width)} px`], ["Alto", `${round(m.height)} px`]]),
+				h("p", { class: "fv-hint", text: "Medida en el render, desde la esquina del componente." }));
+		const rows = [["X", m.x, fb[0]], ["Y", m.y, fb[1]], ["Ancho", m.width, fb[2]], ["Alto", m.height, fb[3]]];
+		const delta = (a, b) => {
+			const d = Math.round((a - b) * 100) / 100;
+			return h("td", { class: Math.abs(d) > DEVIATION_PX ? "fv-delta fv-off" : "fv-delta", text: d ? `${d > 0 ? "+" : "−"}${Math.abs(d)}` : "=" });
+		};
+		const textNote = selected.kind === "text" && fontsMissing.length > 0;
+		return section("Caja",
+			h("table", { class: "fv-boxtable" },
+				h("thead", {}, h("tr", {}, h("th", {}), h("th", { text: "Render" }), h("th", { text: "Figma" }), h("th", { text: "Δ" }))),
+				h("tbody", {}, rows.map(([k, a, b]) => h("tr", {}, h("th", { text: k }), h("td", { text: round(a) }), h("td", { text: round(b) }), delta(a, b))))),
+			h("p", { class: "fv-hint", text: `En px, desde la esquina del componente. La caja de Figma se dibuja en naranja.${textNote ? " En los textos, la diferencia puede venir de las fuentes no instaladas." : ""}` }));
+	}
+
+	// Lista de capas corridas más de DEVIATION_PX respecto de Figma (se recalcula en cada render)
+	const devBox = h("details", { class: "fv-devs", open: true });
+	function computeDeviations() {
+		devOf.clear();
+		devs = figmaBoxes
+			? deviations(layers.filter((l) => !l.inside).map((l) => ({ layer: l, render: measured(l), figma: figmaBoxOf(l) })))
+			: [];
+		for (const d of devs) devOf.set(d.layer, d);
+		devBox.hidden = !figmaBoxes;
+		if (!figmaBoxes) return;
+		devBox.replaceChildren(
+			h("summary", { text: devs.length ? `Desvíos de Figma (${devs.length})` : "Desvíos de Figma" }),
+			devs.length
+				? h("ul", {}, devs.map((d) => h("li", {},
+					h("button", { type: "button", class: "fv-link", text: treeLabel(d.layer, code).main, onclick: () => select(d.layer) }),
+					h("span", { class: "fv-dev-text", text: ` ${deviationText(d)}` }))))
+				: h("p", { class: "fv-hint", text: `Ninguna capa se corre más de ${DEVIATION_PX} px de Figma.` }),
+			devs.length > 0 && fontsMissing.length > 0 && devs.some((d) => d.layer.kind === "text") &&
+				h("p", { class: "fv-hint", text: "Las diferencias en textos pueden venir de las fuentes no instaladas." }),
+		);
+	}
+
 	function showSelection() {
 		if (!selected) {
 			selectionBox.replaceChildren(h("p", { class: "fv-hint", text: "Haz clic en el lienzo o en una capa para verla. Esc sube al contenedor." }));
@@ -998,8 +1093,7 @@ function boot(doc, data) {
 				h("button", { type: "button", class: "fv-link", "aria-current": c === selected ? "true" : null, text: treeLabel(c, code).main, onclick: () => select(c) }),
 			])),
 			h("p", { class: "fv-insp-title" }, h("span", { class: `fv-kind fv-kind-${selected.kind}`, text: lab.icon }), " ", h("strong", { text: lab.main }), lab.sub && h("span", { class: "fv-sub", text: ` ${lab.sub}` })),
-			m && section("Caja", pairs([["X", `${round(m.x)} px`], ["Y", `${round(m.y)} px`], ["Ancho", `${round(m.width)} px`], ["Alto", `${round(m.height)} px`]]),
-				h("p", { class: "fv-hint", text: "Medida en el render, desde la esquina del componente." })),
+			m && boxSection(m, figmaBoxOf(selected)),
 		];
 		if (selected.kind === "text") {
 			const bound = el.bind && el.bind.text;
@@ -1055,6 +1149,7 @@ function boot(doc, data) {
 			code = !code;
 			codeSwitch.setAttribute("aria-pressed", String(code));
 			store(CODE_KEY, code ? "1" : "0");
+			computeDeviations();
 			drawTree();
 			showSelection();
 		}, text: "Código" });
@@ -1129,6 +1224,7 @@ function boot(doc, data) {
 	function renderNow({ refit = false } = {}) {
 		const keep = selected && selected.key;
 		pv = previewFor(data, view.comp, view.values);
+		figmaBoxes = geometryFor(data, view.comp, view.values);
 		const compare = !!(data.preview && pv.offset);
 		const scale = meta.preview ? meta.preview.scale : 1;
 		// La parte de la imagen que se muestra (en un set, la variante elegida) y el render encima
@@ -1169,13 +1265,14 @@ function boot(doc, data) {
 		if (refit || old.width !== box.width || old.height !== box.height) fit();
 		else setZoom(zoom);
 		resetBtn.hidden = JSON.stringify(view.values) === JSON.stringify(baseValues());
+		computeDeviations();
 		drawTree();
 		showSelection();
 		showPreviewNote();
 	}
 
 	const notices = [];
-	const fonts = missingFonts(doc, Object.values(data.css || {}));
+	const fonts = fontsMissing;
 	if (fonts.length)
 		notices.push(`${fonts.length === 1 ? "La fuente" : "Las fuentes"} ${fonts.join(", ")} no ${fonts.length === 1 ? "está instalada" : "están instaladas"} en este equipo: esos textos se ven con otra tipografía y en la comparación con Figma van a aparecer distintos. ${fonts.length === 1 ? "Instálala" : "Instálalas"} para comparar.`);
 	if (data.missing && data.missing.length)
@@ -1203,6 +1300,7 @@ function boot(doc, data) {
 			h("div", { class: "fv-center" }, toolbar, propsBar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
 				decisionsBox,
+				devBox,
 				h("h2", { text: "Inspector" }),
 				selectionBox,
 				h("h2", { text: "Detalles" }),
@@ -1269,4 +1367,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, geometryFor, deviations, deviationText, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

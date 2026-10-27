@@ -289,3 +289,29 @@ test("meta.preview: con --no-png no se incluye", () => {
 	const doc = F("Card", "VERTICAL", [T("Hola")]);
 	assert.equal(extract(pluginBundle(doc, fakePng(200, 100)), ["--no-png"]).spec.meta.preview, undefined);
 });
+
+// ---------------------------------------------------------------- figma-geometry.json
+test("geometría: la caja de Figma de cada capa, relativa a la raíz de su variante", () => {
+	const at = (n, x, y) => ({ ...n, absoluteBoundingBox: { ...n.absoluteBoundingBox, x, y } });
+	const variant = (state, x, y, extra) => ({
+		id: `${++seq}:1`, name: `State=${state}`, type: "COMPONENT", layoutMode: "VERTICAL", absoluteBoundingBox: { x, y, width: 100, height: 60 },
+		children: [at(T("Título"), x + 8, y + 4), at(T("Texto"), x + 8, y + (state === "Open" ? 30 : 24)), ...(extra || [])],
+	});
+	const set = {
+		id: `${++seq}:1`, name: "Panel", type: "COMPONENT_SET", absoluteBoundingBox: box(400, 200),
+		componentPropertyDefinitions: { State: { type: "VARIANT", defaultValue: "Closed", variantOptions: ["Closed", "Open"] } },
+		children: [variant("Closed", 0, 0), variant("Open", 200, 100)],
+	};
+	const r = extract(pluginBundle(set));
+	const g = JSON.parse(fs.readFileSync(path.join(r.out, "figma-geometry.json"), "utf8"));
+	const [closed, open] = g.variants;
+	const [title, text] = r.spec.component.structure.children;
+	assert.deepEqual(closed.when, { state: "Closed" });
+	assert.deepEqual(closed.boxes[title.id], [8, 4, 50, 20]);
+	assert.deepEqual(closed.boxes[text.id], [8, 24, 50, 20]);
+	// En Open, la misma capa (por clase) con su posición en esa variante
+	assert.deepEqual(open.boxes[text.id], [8, 30, 50, 20]);
+	assert.deepEqual(open.boxes[r.spec.component.structure.id], [0, 0, 100, 60]);
+	const files = JSON.parse(fs.readFileSync(path.join(r.out, ".figspec-manifest.json"), "utf8")).files;
+	assert.ok(files.includes("figma-geometry.json"), "registrado en el manifiesto");
+});

@@ -490,3 +490,37 @@ test("archivo de decisiones: el extractor lo acepta tal como lo arma el visualiz
 	assert.deepEqual(spec.meta.decisions.names.byId, { [id]: "Leyenda" });
 	assert.equal(spec.meta.source.bundle, "in.json");
 });
+
+// ---------------------------------------------------------------- desvíos de posición
+test("desvíos: cajas de la variante que se ve; solo del componente principal", () => {
+	const data = { spec: cardData.spec, geometry: { variants: [
+		{ when: { state: "Default", size: "S" }, boxes: { a: [0, 0, 10, 10] } },
+		{ when: { state: "Hover", size: "L" }, boxes: { a: [0, 5, 10, 10] } },
+	] } };
+	assert.deepEqual(client.geometryFor(data, "Card", {}), { a: [0, 0, 10, 10] });
+	assert.deepEqual(client.geometryFor(data, "Card", { state: "Hover", size: "L" }), { a: [0, 5, 10, 10] });
+	assert.equal(client.geometryFor(data, "Card", { state: "Active" }), null);
+	assert.equal(client.geometryFor(data, "Tag", {}), null);
+	assert.equal(client.geometryFor({ spec: cardData.spec }, "Card", {}), null);
+});
+
+test("desvíos: solo las capas que se corren más de 2 px, de mayor a menor", () => {
+	const r = (x, y, width, height) => ({ x, y, width, height });
+	const list = client.deviations([
+		{ layer: "igual", render: r(10, 10, 50, 20), figma: [10, 10, 50, 20] },
+		{ layer: "casi", render: r(12, 10, 50, 20), figma: [10, 10, 50, 20] },
+		{ layer: "corrida", render: r(10, 13, 50, 20), figma: [10, 10, 50, 20] },
+		{ layer: "angosta", render: r(10, 10, 40, 20), figma: [10, 10, 50, 20] },
+		{ layer: "sin figma", render: r(0, 0, 1, 1), figma: null },
+	]);
+	assert.deepEqual(list.map((d) => d.layer), ["angosta", "corrida"]);
+	assert.equal(client.deviationText(list[0]), "ancho −10");
+	assert.equal(client.deviationText(list[1]), "y +3");
+});
+
+test("viewer.html embebe figma-geometry.json", () => {
+	const { out } = extract(["--viewer"], cardSet());
+	const data = embedded(fs.readFileSync(path.join(out, "viewer.html"), "utf8"));
+	assert.equal(data.geometry.format, 1);
+	assert.equal(data.geometry.variants.length, 8);
+});
