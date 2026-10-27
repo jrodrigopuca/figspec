@@ -479,3 +479,13 @@ test("sin letras: el componente \"2\" tiene un nombre válido y se avisa", () =>
 	assert.equal(r.spec.component.name, "Componente2");
 	assert.ok(r.spec.meta.notes.some((n) => /se llama "2" en Figma/.test(n)));
 });
+
+test("figma-geometry.json lista las capas con nombre vago (para el modo Nombres del visualizador)", () => {
+	const doc = F("Card", "VERTICAL", [F("Frame 5", "HORIZONTAL", [T("Benefits")]), F("Header", "HORIZONTAL", [T("Hola")]), F("2", "HORIZONTAL", [T("Logs")])]);
+	const r = extract(doc, [], plugin(doc));
+	const g = JSON.parse(fs.readFileSync(path.join(r.out, "figma-geometry.json"), "utf8"));
+	const [frame5, header, two] = doc.children;
+	assert.ok(g.vague.includes(frame5.id) && g.vague.includes(two.id));
+	assert.ok(!g.vague.includes(header.id), "un nombre del diseñador no es vago");
+	assert.ok(!g.vague.includes(doc.id), "la raíz no se lista");
+});

@@ -173,7 +173,21 @@ carpeta aparte):
   restringido a 127.0.0.1/localhost, cuerpo hasta 5 MB, puerto `FIGMA_PORT` (4870) o el
   siguiente libre; el viewer.html suelto descarga. Validado con un clic real en Chrome sobre una
   copia de "Achievements": el nombre del visualizador ganó al del plugin y la vista se
-  regeneró; 2 pruebas) · 3b modo Nombres (sin Código, estado aplicados/sin guardar) · 3c estados · 4 `npm run react` (destino, al día, aviso de cambios en
+  regeneró; 2 pruebas) · ~~3b modo Nombres~~ (hecho: pestaña Nombres junto a Capas, sin Código: el componente y las
+  capas que se pueden renombrar, primero las de nombre vago en Figma —el extractor las lista en
+  `figma-geometry.json`, `vague`—, una vez por capa de Figma; clase resultante en vivo, Enter
+  pasa a la siguiente, Esc vuelve, al enfocar se marca la capa; estado "N aplicados · M sin
+  guardar" con Guardar nombres; `renameTargetOf` y `nameRows` compartidos con el inspector.
+  Validado en Chrome con "Achievements" (8 capas vagas primero); de paso se corrigieron un
+  "false" suelto en Desvíos y dos casos posibles de "null"/"false" en el panel; 3 pruebas) ·
+  ~~3c estados~~ (hecho: en la pestaña Nombres, una sección por subcomponente extraído con una fila
+  por estado y sus ítems —`stateRows` lee las instancias con `state` de la estructura—; el nombre
+  se guarda por ítem en `states` del archivo de decisiones, con ruta y fecha; los estados que solo
+  existen en otra variante del padre no se editan (el extractor toma los nombres de la variante
+  por defecto); sin ítems extraídos, una nota. Validado con el menú real extraído: legacy →
+  archived llegó a NavItem. De paso: "Guardar nombres" del viewer.html suelto fallaba desde 3a
+  (`const doc` tapaba el documento en `download()`); corregido, con una prueba que lo impide.
+  4 pruebas) · 4 `npm run react` (destino, al día, aviso de cambios en
   clases y props) · 5 grupos repetidos.
   _Tema a revisar (usuario):_ agrupar los ítems de un grupo repetido. Opciones: una clase común
   (`.item`) si los estilos son idénticos; `.item` más un modificador por estado

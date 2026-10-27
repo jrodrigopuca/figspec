@@ -540,3 +540,89 @@ test("viewer.html embebe figma-geometry.json", () => {
 	assert.equal(data.geometry.format, 1);
 	assert.equal(data.geometry.variants.length, 8);
 });
+
+// ---------------------------------------------------------------- modo Nombres
+test("modo Nombres: el componente primero, luego las capas de nombre vago, una vez por capa de Figma", () => {
+	card({});
+	const tree = client.renderTree(cardData, "Card", { state: "Hover" });
+	const layers = client.treeModel(tree);
+	const label = layers.find((l) => l.cls === "label");
+	const tag = layers.find((l) => l.node.instance);
+	const rows = client.nameRows(layers, [tag.node.instance.el.id], true, cardData.spec.component);
+	assert.equal(rows[0].target.kind, "root");
+	assert.equal(rows[1].target.id, tag.node.instance.el.id, "las vagas antes");
+	assert.equal(rows[1].vague, true);
+	assert.ok(rows.some((r) => r.target.id === label.node.el.id && !r.vague));
+	const ids = rows.filter((r) => r.target.kind === "layer").map((r) => r.target.id);
+	assert.equal(new Set(ids).size, ids.length, "sin repetidos");
+	// Un subcomponente suelto no ofrece renombrar el componente principal ni su raíz
+	const sub = client.treeModel(client.renderTree(cardData, "Tag", {}));
+	assert.ok(client.nameRows(sub, [], false, cardData.spec.component).every((r) => r.target.kind === "layer"));
+});
+
+test("renombrar: qué se renombra en cada capa", () => {
+	const layers = client.treeModel(client.renderTree(cardData, "Card", {}));
+	assert.deepEqual(client.renameTargetOf(layers[0], true, cardData.spec.component), { kind: "root", current: "Card", figma: "Card" });
+	assert.equal(client.renameTargetOf(layers[0], false, cardData.spec.component), null, "la raíz de un subcomponente suelto, no");
+	const t = client.renameTargetOf(layers.find((l) => l.cls === "label"), true, cardData.spec.component);
+	assert.equal(t.kind, "layer");
+	assert.equal(t.current, "label");
+	assert.equal(client.renameTargetOf(null, true, cardData.spec.component), null);
+});
+
+// ---------------------------------------------------------------- estados de los ítems extraídos
+test("estados: cada estado del subcomponente extraído con sus ítems; los de otra variante no se editan", () => {
+	const spec = {
+		component: { name: "Nav", structure: { className: "root", children: [
+			{ id: "1:1", name: "Item", className: "item", component: "NavItem", props: { state: "active", label: "Inicio" } },
+			{ id: "1:2", name: "Item", className: "item", component: "NavItem", props: { state: "default", label: "Perfil" } },
+			{ id: "1:3", name: "Item", className: "item", component: "NavItem", props: { state: "default", label: "Ajustes" } },
+			{ id: "1:4", name: "Badge", className: "badge", component: "Badge", props: { state: "x" } },
+		] } },
+		subcomponents: {
+			NavItem: { name: "NavItem", extractedFrom: "Nav", props: { state: { type: "variant", options: ["default", "active", "off"] } }, structure: { className: "root" } },
+			Badge: { name: "Badge", props: {}, structure: { className: "root" } },
+		},
+	};
+	assert.deepEqual(client.stateRows(spec), [{ sub: "NavItem", states: [
+		{ name: "default", ids: ["1:2", "1:3"], labels: ["Perfil", "Ajustes"], editable: true },
+		{ name: "active", ids: ["1:1"], labels: ["Inicio"], editable: true },
+		{ name: "off", ids: [], labels: [], editable: false },
+	] }], "Badge no es un ítem extraído: no cuenta");
+});
+
+test("archivo de decisiones: los estados renombrados van por ítem, con ruta y fecha", () => {
+	const meta = { source: { node: "1:0" }, decisions: { version: 2, layers: [], states: [{ id: "1:9", name: "viejo", at: "t0" }] } };
+	const info = (id) => ({ figma: `Item ${id}`, path: [["Item", Number(id.split(":")[1])]] });
+	const doc = client.decisionsDoc(meta, { byId: {}, states: { "1:2": "normal", "1:3": "normal" } }, info, "t1");
+	assert.deepEqual(doc.states, [
+		{ id: "1:9", name: "viejo", at: "t0" },
+		{ id: "1:2", figma: "Item 1:2", path: [["Item", 2]], name: "normal", at: "t1", origin: "viewer" },
+		{ id: "1:3", figma: "Item 1:3", path: [["Item", 3]], name: "normal", at: "t1", origin: "viewer" },
+	]);
+});
+
+test("estados: el extractor aplica un estado renombrado desde el visualizador", () => {
+	const solid = (r, g, b) => [{ type: "SOLID", color: { r, g, b, a: 1 } }];
+	const item = (label, extra = {}) => ({ id: `${++seq}:1`, name: "Item", type: "FRAME", layoutMode: "HORIZONTAL", absoluteBoundingBox: box(100, 20), children: [{ ...T(label), name: "Label" }], ...extra });
+	const items = [item("Inicio", { fills: solid(0, 0, 0) }), item("Perfil"), item("Ajustes"), item("Ayuda", { opacity: 0.4 })];
+	const doc = { id: `${++seq}:1`, name: "Nav", type: "FRAME", layoutMode: "VERTICAL", absoluteBoundingBox: box(100, 100), children: items };
+	const input = { figspec: 2, name: "Nav", nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {}, nodes: { [doc.id]: { document: doc } } };
+	const first = extract(["--viewer", "--extract-repeated"], input);
+	const data = embedded(fs.readFileSync(path.join(first.out, "viewer.html"), "utf8"));
+	const [group] = client.stateRows(data.spec);
+	const disabled = group.states.find((s) => s.name === "disabled");
+	const decisions = client.decisionsDoc(data.spec.meta, { byId: {}, states: Object.fromEntries(disabled.ids.map((id) => [id, "apagado"])) }, () => ({}), "2026-10-27T12:00:00.000Z");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-st-"));
+	fs.writeFileSync(path.join(dir, "d.json"), JSON.stringify(decisions));
+	const second = extract(["--extract-repeated", "--decisions", path.join(dir, "d.json")], input);
+	const spec = JSON.parse(fs.readFileSync(path.join(second.out, "component.json"), "utf8"));
+	assert.ok(Object.values(spec.subcomponents).find((s) => s.extractedFrom).props.state.options.includes("apagado"));
+});
+
+test("el visualizador no tapa la variable doc (el documento) dentro de boot", () => {
+	// Un "const doc = …" rompió la descarga de Guardar nombres en el viewer.html suelto
+	const src = fs.readFileSync(path.join(ROOT, "viewer-client.js"), "utf8");
+	const boot = src.slice(src.indexOf("function boot(doc, data) {"));
+	assert.doesNotMatch(boot, /\b(const|let|var)\s+doc\b/);
+});

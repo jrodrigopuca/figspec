@@ -477,6 +477,67 @@ function codeComponent(name) {
 	return spec.pascal(name) || "Componente";
 }
 
+// Qué se renombra al elegir una capa: el componente (la raíz del principal) o la clase de la capa,
+// por su id de Figma; null si no se puede (la raíz de un subcomponente, salidas sin ids)
+function renameTargetOf(layer, rootView, rootComp) {
+	if (!layer) return null;
+	if (!layer.parent && rootView) return { kind: "root", current: rootComp.name, figma: rootComp.figmaName };
+	const n = layer.node;
+	const el = n.instance ? n.instance.el : n.el;
+	if (!el.id || el.className === "root") return null;
+	return { kind: "layer", id: el.id, current: el.className, figma: el.name };
+}
+
+// Filas del modo Nombres: lo que se puede renombrar, una vez por capa de Figma (las internas de
+// instancias repetidas comparten id), primero el componente y las de nombre vago en Figma
+function nameRows(layers, vagueIds, rootView, rootComp) {
+	const vague = new Set(vagueIds || []);
+	const seen = new Set();
+	const rows = [];
+	for (const layer of layers) {
+		const t = renameTargetOf(layer, rootView, rootComp);
+		if (!t) continue;
+		const key = t.kind === "root" ? "root" : t.id;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		rows.push({ layer, target: t, vague: t.kind === "layer" && vague.has(t.id) });
+	}
+	const rank = (r) => (r.target.kind === "root" ? 0 : r.vague ? 1 : 2);
+	return rows.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map((x) => x.r);
+}
+
+// Estados de los ítems extraídos (--extract-repeated), para renombrarlos: por subcomponente,
+// cada estado con los ítems que lo tienen en la estructura (variante por defecto del padre). El
+// nombre se guarda por ítem (como en el plugin). Un estado que solo aparece en otra variante del
+// padre (p. ej. "off") no tiene ítems aquí: el extractor toma los nombres de la variante por
+// defecto, así que no se puede renombrar desde aquí (editable: false).
+function stateRows(spec) {
+	const subs = spec.subcomponents || {};
+	const found = new Map(); // subcomponente → estado → { ids, labels }
+	const walk = (el) => {
+		const sub = el.component && subs[el.component];
+		if (sub && sub.extractedFrom && el.props && el.props.state !== undefined && el.id) {
+			if (!found.has(sub.name)) found.set(sub.name, new Map());
+			const m = found.get(sub.name);
+			const st = String(el.props.state);
+			if (!m.has(st)) m.set(st, { ids: [], labels: [] });
+			m.get(st).ids.push(el.id);
+			m.get(st).labels.push(typeof el.props.label === "string" ? el.props.label : el.name);
+		}
+		(el.children || []).forEach(walk);
+	};
+	for (const comp of [spec.component, ...Object.values(subs)]) walk(comp.structure);
+	const out = [];
+	for (const [subName, m] of found) {
+		const options = ((subs[subName].props || {}).state || {}).options || [...m.keys()];
+		out.push({
+			sub: subName,
+			states: options.map((name) => ({ name, ids: (m.get(name) || {}).ids || [], labels: (m.get(name) || {}).labels || [], editable: m.has(name) })),
+		});
+	}
+	return out;
+}
+
 // Lo ya aplicado (meta.decisions), en la forma v2: { root, layers: [...], states: [...] }. Las
 // salidas anteriores lo guardaban como v1 ({ names: { root, byId, states } }).
 function appliedDecisions(meta) {
@@ -497,7 +558,7 @@ function appliedName(meta, id) {
 }
 
 // Archivo de decisiones (v2) para el extractor: lo ya aplicado más los cambios nuevos. pending:
-// { root?: nombre | null, byId: { id: nombre | null } }; null quita el nombre (queda registrado con
+// { root?: nombre | null, byId: { id: nombre | null }, states?: { id de ítem: estado } }; null quita el nombre (queda registrado con
 // su fecha, así un archivo viejo no lo repone). info(id) → { figma, path } de la capa, para que el
 // extractor la reconozca aunque cambie el id. Se conserva lo que no encontró capa.
 function decisionsDoc(meta, pending, info = () => ({}), now = new Date().toISOString()) {
@@ -507,6 +568,11 @@ function decisionsDoc(meta, pending, info = () => ({}), now = new Date().toISOSt
 	for (const [id, v] of Object.entries(pending.byId || {})) {
 		const i = info(id) || {};
 		layers.set(id, { id, ...(i.figma ? { figma: i.figma } : {}), ...(i.path ? { path: i.path } : {}), name: v, at: now, origin: "viewer" });
+	}
+	const states = new Map(a.states.map((x) => [x.id, strip(x)]));
+	for (const [id, v] of Object.entries(pending.states || {})) {
+		const i = info(id) || {};
+		states.set(id, { id, ...(i.figma ? { figma: i.figma } : {}), ...(i.path ? { path: i.path } : {}), name: v, at: now, origin: "viewer" });
 	}
 	let root = a.root ? strip(a.root) : null;
 	if ("root" in pending) root = { name: pending.root, at: now, origin: "viewer" };
@@ -518,7 +584,7 @@ function decisionsDoc(meta, pending, info = () => ({}), now = new Date().toISOSt
 		component: { id: (meta.source && meta.source.node) || null, ...(meta.decisions && meta.decisions.component && meta.decisions.component.figma ? { figma: meta.decisions.component.figma } : {}) },
 		...(root ? { root } : {}),
 		layers: [...layers.values()],
-		states: a.states.map(strip),
+		states: [...states.values()],
 		groups: [],
 	};
 }
@@ -938,16 +1004,12 @@ function boot(doc, data) {
 	}
 	const wasApplied = (t) => appliedName(meta, t.kind === "root" ? "root" : t.id);
 	const savePending = () => store(DEC_KEY, JSON.stringify(pending));
-	const pendingCount = () => Object.keys(pending.byId).length + ("root" in pending ? 1 : 0);
+	// Estados de los ítems extraídos (por subcomponente) y los renombrados sin guardar
+	const states = stateRows(design);
+	const pendingStates = () => states.flatMap((g) => g.states.filter((st) => st.ids.length && pending.states && pending.states[st.ids[0]] !== undefined).map((st) => ({ g, st, to: pending.states[st.ids[0]] })));
+	const pendingCount = () => Object.keys(pending.byId).length + ("root" in pending ? 1 : 0) + pendingStates().length;
 	// Qué se renombra al elegir una capa: el componente (la raíz) o la clase de la capa, por su id
-	function renameTarget(layer) {
-		if (!layer) return null;
-		if (!layer.parent && view.comp === rootName) return { kind: "root", current: design.component.name, figma: design.component.figmaName };
-		const n = layer.node;
-		const el = n.instance ? n.instance.el : n.el;
-		if (!el.id || el.className === "root") return null;
-		return { kind: "layer", id: el.id, current: el.className, figma: el.name };
-	}
+	const renameTarget = (layer) => renameTargetOf(layer, view.comp === rootName, design.component);
 	function pendingFor(t) {
 		if (!t) return undefined;
 		return t.kind === "root" ? ("root" in pending ? pending.root : undefined) : pending.byId[t.id];
@@ -964,6 +1026,7 @@ function boot(doc, data) {
 		savePending();
 		drawTree();
 		showDecisions();
+		namesStatus();
 	}
 	function forget(t) {
 		// Vuelve al nombre de Figma: si había una decisión aplicada, se quita (null)
@@ -977,6 +1040,7 @@ function boot(doc, data) {
 		drawTree();
 		showDecisions();
 		showSelection();
+		drawNames();
 	}
 	const decisionsBox = h("div", { class: "fv-decisions", role: "region", "aria-label": "Nombres cambiados" });
 	// Mismo nombre base que el paquete del plugin (figspec-menu-mobile.json → .decisions.json)
@@ -1023,8 +1087,8 @@ function boot(doc, data) {
 	}
 	const alertBox = h("p", { class: "fv-hint fv-error-text", role: "alert", hidden: true });
 	function download() {
-		const doc = currentDoc();
-		const blob = new Blob([JSON.stringify(doc, null, 2) + "\n"], { type: "application/json" });
+		const decisions = currentDoc();
+		const blob = new Blob([JSON.stringify(decisions, null, 2) + "\n"], { type: "application/json" });
 		const a = doc.createElement("a");
 		a.href = URL.createObjectURL(blob);
 		a.download = fileName;
@@ -1045,6 +1109,7 @@ function boot(doc, data) {
 			const t = l && renameTarget(l);
 			rows.push({ from: t ? `.${t.current}` : id, to: v === null ? "(el que elija el extractor)" : `.${codeClass(v)}`, layer: find });
 		}
+		for (const { g, st, to } of pendingStates()) rows.push({ from: `${g.sub} · estado ${st.name}`, to: codeClass(to), layer: () => null });
 		const cmd = `node extractor.js ${bundleFile} --viewer`;
 		const copyBtn = h("button", { type: "button", class: "fv-link", text: "Copiar comando", onclick: () => copy(cmd, copyBtn) });
 		const saveBtn = h("button", { type: "button", class: "fv-primary", text: "Guardar nombres",
@@ -1054,13 +1119,139 @@ function boot(doc, data) {
 			h("ul", {}, rows.map((r) => h("li", {}, h("button", { type: "button", class: "fv-link", text: r.from, onclick: () => { const l = r.layer(); if (l) select(l); } }), " → ", h("code", { text: r.to })))),
 			h("div", { class: "fv-insp-tools" },
 				saveBtn,
-				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); } })),
+				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); drawNames(); } })),
 			alertBox,
 			server
 				? h("p", { class: "fv-hint", text: "Se aplican al momento: el extractor los guarda en las decisiones del proyecto y la vista se regenera." })
 				: h("p", { class: "fv-hint" }, `Se descarga ${fileName}: guárdalo en la carpeta de entrada (junto al paquete) y vuelve a generar (npm start, o `, h("code", { text: cmd }), "). Con npm start se guardan sin descargar. ", copyBtn),
 		);
 	}
+
+	// ---------------------------------------------------------------- modo Nombres
+	// Pestaña del panel izquierdo para nombrar capas sin prender Código: primero el componente y
+	// las de nombre vago en Figma, cada una con la clase que resultará; Enter pasa a la siguiente.
+	const TAB_KEY = "figspec.viewer.tab";
+	let leftTab = stored(TAB_KEY) === "names" ? "names" : "layers";
+	const namesBox = h("div", { class: "fv-names", role: "tabpanel", "aria-label": "Nombres" });
+	const namesHead = h("div", { class: "fv-names-head" });
+	const namesList = h("div", { class: "fv-names-list" });
+	namesBox.append(namesHead, namesList);
+	const appliedCount = () => {
+		const a = appliedDecisions(meta);
+		return a.layers.filter((x) => !x.orphan && x.name).length + (a.root && a.root.name ? 1 : 0);
+	};
+	function namesStatus() {
+		const n = pendingCount();
+		const btn = n ? h("button", { type: "button", class: "fv-primary", text: "Guardar nombres", onclick: () => saveNames(btn) }) : null;
+		namesHead.replaceChildren(...[
+			h("p", { class: "fv-names-count", text: `${appliedCount()} aplicado${appliedCount() === 1 ? "" : "s"} · ${n} sin guardar` }),
+			btn,
+		].filter(Boolean));
+	}
+	function drawNames() {
+		namesStatus();
+		if (leftTab !== "names") return;
+		const rows = nameRows(layers, data.geometry && data.geometry.vague, view.comp === rootName, design.component);
+		const inputs = [];
+		namesList.replaceChildren(...rows.map((r, i) => {
+			const t = r.target;
+			const p = pendingFor(t);
+			const shown = p === undefined || p === null ? t.current : p;
+			const result = h("span", { class: "fv-names-result" });
+			const showResult = (v) => {
+				const x = v.trim();
+				result.textContent = !x || x === t.current ? "" : t.kind === "root" ? `→ ${codeComponent(x)}` : `→ .${codeClass(x)}`;
+			};
+			const input = h("input", { type: "text", value: shown, "aria-label": `Nombre de ${t.figma}`,
+				oninput: (e) => { showResult(e.target.value); setPending(t, e.target.value); },
+				onfocus: () => { if (r.layer !== selected) select(r.layer); },
+				onkeydown: (e) => {
+					if (e.key === "Enter") {
+						e.preventDefault();
+						const next = inputs[(i + 1) % inputs.length];
+						if (next) next.focus(), next.select();
+					} else if (e.key === "Escape") {
+						e.preventDefault();
+						e.stopPropagation();
+						input.value = t.current;
+						showResult(t.current);
+						setPending(t, t.current);
+					}
+				} });
+			inputs.push(input);
+			showResult(shown);
+			const lab = treeLabel(r.layer, false);
+			return h("div", { class: `fv-names-row${r.vague ? " fv-vague" : ""}${p !== undefined ? " fv-pending" : ""}` },
+				h("div", { class: "fv-names-figma" },
+					h("span", { class: `fv-kind fv-kind-${r.layer.kind}`, text: t.kind === "root" ? "◇" : lab.icon }),
+					h("span", { text: t.kind === "root" ? `Componente (${t.figma})` : t.figma }),
+					r.vague && h("span", { class: "fv-vague-tag", title: "Nombre genérico en Figma: conviene uno propio", text: "genérico" })),
+				input,
+				result);
+		}), ...stateSection());
+	}
+
+	// Estados de los ítems extraídos: una fila por estado, con los ítems que lo tienen
+	function stateSection() {
+		if (!states.length)
+			return (design.component.repeated || []).some((r) => r.styleGroups)
+				? [h("p", { class: "fv-hint fv-names-note", text: "Hay ítems repetidos con estilos distintos (posibles estados): se nombran al extraerlos como subcomponente (FIGMA_EXTRACT_REPEATED=true o --extract-repeated)." })]
+				: [];
+		return states.flatMap((g) => [
+			h("h3", { class: "fv-names-section", text: `Estados de ${g.sub}` }),
+			...g.states.map((st) => {
+				const current = pending.states && st.ids.length ? pending.states[st.ids[0]] : undefined;
+				const result = h("span", { class: "fv-names-result" });
+				const showResult = (v) => {
+					const x = v.trim();
+					result.textContent = !x || x === st.name ? "" : `→ ${codeClass(x)}`;
+				};
+				const set = (v) => {
+					const x = v.trim();
+					pending.states = pending.states || {};
+					for (const id of st.ids) {
+						if (!x || x === st.name) delete pending.states[id];
+						else pending.states[id] = x;
+					}
+					savePending();
+					showDecisions();
+					namesStatus();
+				};
+				const input = st.editable
+					? h("input", { type: "text", value: current === undefined ? st.name : current, "aria-label": `Nombre del estado ${st.name} de ${g.sub}`,
+						oninput: (e) => { showResult(e.target.value); set(e.target.value); },
+						onkeydown: (e) => {
+							if (e.key === "Escape") {
+								e.preventDefault();
+								e.stopPropagation();
+								input.value = st.name;
+								showResult(st.name);
+								set(st.name);
+							}
+						} })
+					: h("p", { class: "fv-hint", text: "Solo aparece en otra variante del componente: se nombra desde la variante por defecto." });
+				if (st.editable) showResult(input.value);
+				return h("div", { class: `fv-names-row${current !== undefined ? " fv-pending" : ""}` },
+					h("div", { class: "fv-names-figma" },
+						h("span", { class: "fv-kind", text: "◐" }),
+						h("span", { title: st.labels.join(", "), text: `${st.name}${st.labels.length ? `: ${st.labels.join(", ")}` : ""}` })),
+					input,
+					result);
+			}),
+		]);
+	}
+	const tabButtons = {};
+	function setLeftTab(tab) {
+		leftTab = tab;
+		store(TAB_KEY, tab);
+		treeBox.hidden = tab !== "layers";
+		namesBox.hidden = tab !== "names";
+		for (const [k, b] of Object.entries(tabButtons)) b.setAttribute("aria-selected", String(k === tab));
+		drawNames();
+	}
+	const leftTabs = h("div", { class: "fv-tabs", role: "tablist", "aria-label": "Panel izquierdo" },
+		[["layers", "Capas"], ["names", "Nombres"]].map(([k, label]) =>
+			(tabButtons[k] = h("button", { type: "button", role: "tab", text: label, onclick: () => setLeftTab(k) }))));
 
 	// ---------------------------------------------------------------- inspector
 	// Panel derecho: la capa elegida. Para todos: ruta, caja medida, texto o instancia; con Código,
@@ -1136,7 +1327,7 @@ function boot(doc, data) {
 		for (const d of devs) devOf.set(d.layer, d);
 		devBox.hidden = !figmaBoxes;
 		if (!figmaBoxes) return;
-		devBox.replaceChildren(
+		devBox.replaceChildren(...[
 			h("summary", { text: devs.length ? `Desvíos de Figma (${devs.length})` : "Desvíos de Figma" }),
 			devs.length
 				? h("ul", {}, devs.map((d) => h("li", {},
@@ -1145,7 +1336,7 @@ function boot(doc, data) {
 				: h("p", { class: "fv-hint", text: `Ninguna capa se corre más de ${DEVIATION_PX} px de Figma.` }),
 			devs.length > 0 && fontsMissing.length > 0 && devs.some((d) => d.layer.kind === "text") &&
 				h("p", { class: "fv-hint", text: "Las diferencias en textos pueden venir de las fuentes no instaladas." }),
-		);
+		].filter(Boolean));
 	}
 
 	function showSelection() {
@@ -1214,7 +1405,7 @@ function boot(doc, data) {
 				)) : h("p", { class: "fv-hint", text: "Esta capa no tiene estilos propios." }),
 			));
 		} else parts.push(h("p", { class: "fv-hint", text: "Prende Código para ver el CSS de esta capa." }));
-		selectionBox.replaceChildren(...parts);
+		selectionBox.replaceChildren(...parts.filter(Boolean));
 	}
 	const codeSwitch = h("button", { type: "button", class: "fv-switch", "aria-pressed": String(code), title: "Muestra las clases y el código generado",
 		onclick: () => {
@@ -1339,6 +1530,7 @@ function boot(doc, data) {
 		resetBtn.hidden = JSON.stringify(view.values) === JSON.stringify(baseValues());
 		computeDeviations();
 		drawTree();
+		drawNames();
 		showSelection();
 		showPreviewNote();
 	}
@@ -1365,9 +1557,10 @@ function boot(doc, data) {
 		),
 		notices.length > 0 && h("div", { class: "fv-notices", role: "status" }, notices.map((n) => h("p", { text: n }))),
 		h("main", { class: "fv-main" },
-			h("aside", { class: "fv-side fv-layers", "aria-label": "Capas" },
-				h("h2", { text: "Capas" }),
+			h("aside", { class: "fv-side fv-layers", "aria-label": "Capas y nombres" },
+				leftTabs,
 				treeBox,
+				namesBox,
 			),
 			h("div", { class: "fv-center" }, toolbar, propsBar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
@@ -1425,6 +1618,7 @@ function boot(doc, data) {
 	});
 	preferred = initialMode(stored(MODE_KEY), !!data.preview);
 	showDecisions();
+	setLeftTab(leftTab);
 	buildFields();
 	renderNow({ refit: true });
 	// Tamaño de cada subcomponente en contexto (su primera instancia en la raíz), para dibujarlo suelto
@@ -1439,4 +1633,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, appliedDecisions, appliedName, geometryFor, deviations, deviationText, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, stateRows, renameTargetOf, nameRows, appliedDecisions, appliedName, geometryFor, deviations, deviationText, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

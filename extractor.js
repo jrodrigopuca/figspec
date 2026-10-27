@@ -147,6 +147,7 @@ const ctx = {
 	elId: new WeakMap(), // elemento de structure → id de su capa en Figma
 	nodeBox: new Map(), // id de una capa → absoluteBoundingBox (para figma-geometry.json)
 	geometry: null, // cajas de Figma por variante del componente principal (ver geometryOf)
+	vagueIds: new Set(), // capas con nombre vago en Figma ("Frame 5", "2"): figma-geometry.json
 	inconsistencies: [], // posibles errores del diseño, para inconsistencies.md
 	statesById: new Map(), // id de un ítem repetido → nombre de estado elegido en el plugin
 	icons: new Map(), // componentId | node.id → { name, id, file }
@@ -368,7 +369,7 @@ function main() {
 	// Posibles inconsistencias del diseño, aparte: el desarrollador se lo puede llevar a UX
 	// Cajas de Figma por capa (para la lista de desvíos del visualizador)
 	if (ctx.geometry && ctx.geometry.some((v) => Object.keys(v.boxes).length))
-		write("figma-geometry.json", JSON.stringify({ format: 1, node: nodeId, variants: ctx.geometry, paths: Object.fromEntries(ctx.layerIndex.pathOf) }) + "\n", (s) => s);
+		write("figma-geometry.json", JSON.stringify({ format: 1, node: nodeId, variants: ctx.geometry, paths: Object.fromEntries(ctx.layerIndex.pathOf), vague: [...ctx.vagueIds] }) + "\n", (s) => s);
 	if (ctx.inconsistencies.length) {
 		write("inconsistencies.md", inconsistenciesReport(component), (s) => s);
 		console.error(
@@ -1025,6 +1026,8 @@ function walk(node, parent, pctx, state, root, path = "") {
 	ctx.elSignature.set(el, signature(node));
 	ctx.elId.set(el, node.id);
 	const iconLike = !isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node));
+	// Capas con nombre vago en Figma: el visualizador las lista primero para nombrarlas
+	if (!isRoot && vagueName(node)) ctx.vagueIds.add(node.id);
 	el.className = isRoot
 		? "root"
 		: classFor(

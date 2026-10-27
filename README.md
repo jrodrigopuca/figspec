@@ -211,7 +211,11 @@ El interruptor **Código** está apagado por defecto: así la vista sirve a quie
 
 ### Renombrar
 
-Con **Código** prendido, el inspector tiene un campo **Nombre en código** para la capa elegida (o **Nombre del componente**, en la raíz) y muestra la clase que va a resultar. Los cambios se marcan con ✎ en el árbol y se juntan arriba del inspector; se guardan en el navegador, así no se pierden al recargar. Para aplicarlos:
+La pestaña **Nombres** (junto a **Capas**, a la izquierda) es la forma rápida, sin prender **Código**: lista el componente y todas las capas que se pueden renombrar —primero las de nombre genérico en Figma ("Frame 5", "2"), marcadas—, cada una con su nombre en código y la clase que va a resultar. **Enter** pasa a la siguiente, **Esc** vuelve al nombre que tenía, y al enfocar una fila la capa se marca en el lienzo. Arriba se ve cuántos nombres hay aplicados y cuántos sin guardar, con **Guardar nombres**.
+
+Si el componente tiene ítems extraídos como subcomponente (`--extract-repeated`), la pestaña muestra también sus **estados** (`normal: Benefits, Highlight Offers…`) para renombrarlos; el nombre se guarda en cada ítem, como en el plugin. Un estado que solo aparece en otra variante del componente (por ejemplo `off`) se nombra desde la variante por defecto, así que ahí no se puede editar.
+
+También con **Código** prendido, el inspector tiene un campo **Nombre en código** para la capa elegida (o **Nombre del componente**, en la raíz) y muestra la clase que va a resultar. Los cambios se marcan con ✎ en el árbol y se juntan arriba del inspector; se guardan en el navegador, así no se pierden al recargar. Para aplicarlos:
 
 - Con **`npm start`** (visualizador servido), **Guardar nombres** los aplica al momento: quedan en las decisiones del proyecto (`FIGMA_DECISIONS`) o, sin esa variable, junto al paquete, y la vista se recarga regenerada.
 - Con el **`viewer.html` suelto** (doble clic, el que le pasas a UX), **Guardar nombres** descarga `figspec-<nombre>.decisions.json` (mismo nombre que el paquete): déjalo en la carpeta de entrada (junto al paquete, o en `FIGMA_INBOX`) y vuelve a generar; el extractor lo incorpora solo. Si está en otro lugar, `--decisions <archivo>`.
