@@ -836,6 +836,12 @@ function rotationOf(node) {
 	return Math.abs(ang) > 0.5 ? ang : 0;
 }
 
+// Caja de texto de alto fijo: sin "auto ancho y alto" ni "auto alto" (NONE o TRUNCATE)
+function fixedTextHeight(node) {
+	const a = (node.style || {}).textAutoResize;
+	return node.type === "TEXT" && a !== "WIDTH_AND_HEIGHT" && a !== "HEIGHT";
+}
+
 function placement(node, parent, pctx) {
 	const css = {};
 	const bb = layoutBox(node);
@@ -848,6 +854,8 @@ function placement(node, parent, pctx) {
 	const text = node.type === "TEXT";
 	const autoWidthText =
 		text && (node.style || {}).textAutoResize === "WIDTH_AND_HEIGHT";
+	// Un texto con caja de alto fijo (sin "auto alto") ocupa ese alto en Figma: se conserva
+	const autoHeightText = text && !fixedTextHeight(node);
 	const parentLayout =
 		parent.layoutMode && parent.layoutMode !== "NONE"
 			? parent.layoutMode
@@ -912,7 +920,7 @@ function placement(node, parent, pctx) {
 		else if (c.horizontal !== "LEFT_RIGHT" && !autoWidthText) css.width = W;
 		if (c.vertical === "SCALE")
 			css.height = `${rd((bb.height / ih) * 100)}%`;
-		else if (c.vertical !== "TOP_BOTTOM" && !text) css.height = Hh;
+		else if (c.vertical !== "TOP_BOTTOM" && !autoHeightText) css.height = Hh;
 		minMax(node, css);
 		return css;
 	}
@@ -927,7 +935,7 @@ function placement(node, parent, pctx) {
 		if (al[node.gridChildVerticalAlign])
 			css["align-self"] = al[node.gridChildVerticalAlign];
 		if (H === "FIXED" && !autoWidthText) css.width = W;
-		if (V === "FIXED" && !text) css.height = Hh;
+		if (V === "FIXED" && !autoHeightText) css.height = Hh;
 		minMax(node, css);
 		return css;
 	}
@@ -944,7 +952,7 @@ function placement(node, parent, pctx) {
 	const mainDim = row ? "width" : "height",
 		crossDim = row ? "height" : "width";
 	const skip = (dim) =>
-		(dim === "height" && text) || (dim === "width" && autoWidthText);
+		(dim === "height" && autoHeightText) || (dim === "width" && autoWidthText);
 
 	if (mainS === "FILL") {
 		css.flex = "1 1 0";
@@ -1289,6 +1297,22 @@ function textCss(node, el) {
 		}[s.textAlignHorizontal];
 	}
 	if (s.textAutoResize === "WIDTH_AND_HEIGHT") css["white-space"] = "nowrap";
+	// Alineación vertical dentro de una caja de alto fijo (en CSS el texto queda arriba)
+	const valign = { CENTER: "center", BOTTOM: "flex-end" }[s.textAlignVertical];
+	const clamp = (s.textTruncation === "ENDING" || s.textAutoResize === "TRUNCATE") && s.maxLines > 1;
+	if (valign && fixedTextHeight(node) && !clamp) {
+		if ((node.characterStyleOverrides || []).some(Boolean))
+			// Con partes de estilo distinto, flex apilaría cada parte en su propia línea
+			ctx.notes.add(
+				"Hay textos con alineación vertical centrada o inferior y partes con estilos distintos: se dejaron alineados arriba.",
+			);
+		else
+			Object.assign(css, {
+				display: "flex",
+				"flex-direction": "column",
+				"justify-content": valign,
+			});
+	}
 	if (s.textTruncation === "ENDING" || s.textAutoResize === "TRUNCATE") {
 		if (s.maxLines > 1)
 			Object.assign(css, {

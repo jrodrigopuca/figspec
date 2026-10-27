@@ -115,3 +115,30 @@ test("hijo con posición absoluta dentro de un elemento rotado: se avisa", () =>
 	const r = extract(F("Card", "NONE", [rotated]));
 	assert.ok(r.note(/dentro de un elemento rotado/));
 });
+
+// ---------------------------------------------------------------- cajas de texto de alto fijo
+test("texto en caja de alto fijo centrado verticalmente → alto + flex centrado", () => {
+	const t = { ...T("BackOffice", { textAlignVertical: "CENTER", textAlignHorizontal: "CENTER" }), absoluteBoundingBox: box(412, 146, 10, 20), layoutPositioning: "ABSOLUTE" };
+	const r = extract(F("Card", "NONE", [t]));
+	const css = r.css("BackOffice");
+	assert.equal(css.height, "146px");
+	assert.deepEqual([css.display, css["flex-direction"], css["justify-content"]], ["flex", "column", "center"]);
+});
+
+test("texto alineado abajo → justify-content: flex-end", () => {
+	const r = extract(F("Card", "VERTICAL", [T("Pie", { textAlignVertical: "BOTTOM" })]));
+	assert.equal(r.css("Pie")["justify-content"], "flex-end");
+});
+
+test("texto con auto alto: sin alto fijo ni flex, aunque esté centrado", () => {
+	const r = extract(F("Card", "VERTICAL", [T("Auto", { textAutoResize: "HEIGHT", textAlignVertical: "CENTER" })]));
+	assert.equal(r.css("Auto").height, undefined);
+	assert.equal(r.css("Auto").display, undefined);
+});
+
+test("texto centrado con partes de estilo distinto: se deja arriba y se avisa", () => {
+	const t = { ...T("Hola mundo", { textAlignVertical: "CENTER" }), characterStyleOverrides: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1], styleOverrideTable: { 1: { fontWeight: 700 } } };
+	const r = extract(F("Card", "VERTICAL", [t]));
+	assert.equal(r.css("Hola mundo").display, undefined);
+	assert.ok(r.note(/alineación vertical/));
+});
