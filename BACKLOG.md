@@ -90,6 +90,20 @@ carpeta aparte):
   de props según la variante, solo se reportan. En el padre con variantes no se usa `items.map`
   (cada ítem tiene su clase para `variantProps`).
 
+- [x] **Nombres sin letras** (2026-10-27, primer export real con el plugin de solo lectura:
+  "Achievements", ítems llamados "1"…"4" → `el1`…`el4`). Decidido por el usuario: la sugerencia
+  gana, porque un número no sirve para generar el nombre. `noLetters` en extractor y plugin: vago
+  siempre; un texto se nombra por su contenido si sirve; un contenedor por su único texto propio o,
+  si no tiene, por el primero que sirva más adentro (solo en este caso, para no cambiar los
+  demás), más el rol; sin textos, el rol solo. Componentes: `Componente2`, con aviso. Validado:
+  "Achievements" da `membersRow`, `clubsRow`, `eventBookingsRow`, `paymentsRow`; las otras 28
+  salidas no cambian; 5 pruebas genéricas y paridad con el plugin.
+- [ ] **Altura de textos redondeada por Figma** (encontrado con la lista de desvíos en
+  "Achievements"). Figma redondea hacia arriba la caja de los textos con interlineado decimal
+  (12,02 → 13 px, 8,01 → 9 px); el CSS solo da el interlineado, y en ese componente se acumula
+  hasta 4 px de alto y corre la segunda fila 3 px. Propuesta: si la caja de Figma supera el
+  interlineado × líneas por menos de 1 px, `min-height` con la altura de Figma. Validar que baje la
+  lista de desvíos y que no cambien los casos sin decimales.
 - [ ] **Flujo de trabajo sin escribir en Figma** (acordado con el usuario el 2026-10-27, con
   ux-ui y architect). Objetivo: el plugin no deja ningún rastro en el archivo de Figma (ni
   `setPluginData`: llena el historial de versiones y genera ruido a UX/UI) y los nombres viven en

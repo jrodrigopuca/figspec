@@ -157,6 +157,20 @@ test("paridad: la sugerencia del plugin es la clase que genera el extractor", as
 	assert.deepEqual(mismatches, []);
 });
 
+test("paridad: nombres sin letras (\"1\", \"02\") tienen la misma sugerencia en plugin y extractor", async () => {
+	const stat = (n, value, label) => F(n, "HORIZONTAL", [V("Icon"), F("Details", "VERTICAL", [T(value), T(label)])]);
+	const doc = F("Stats", "VERTICAL", [stat("2", "2,245,341", "Members"), stat("1", "46,328", "Clubs"), F("01", "HORIZONTAL", [V("x")]), { ...T("Pagos"), name: "3" }]);
+	const sim = simulate(doc);
+	await tick();
+	const rows = last(sim.messages, "analysis").rows;
+	const { byName } = extract(await exportWith(sim, { root: "", byId: {} }));
+	for (const name of ["2", "1", "01", "3"]) {
+		const row = rows.find((r) => r.name === name);
+		assert.ok(row, `el plugin lista "${name}"`);
+		assert.equal(byName.find((e) => e.name === name).className, row.suggestion, name);
+	}
+});
+
 test("ubicar centra la capa sin cambiar la selección; otra selección solo se avisa", async () => {
 	const doc = sampleDoc();
 	const sim = simulate(doc);

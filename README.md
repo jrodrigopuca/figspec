@@ -102,9 +102,10 @@ Las clases, los íconos y los componentes toman el nombre de las capas de Figma.
 | Ícono sin texto cerca | `icon`, `icon2`… |
 | Texto que no sirve de nombre ("$1.200", "••••", un párrafo, un email) | `text`, `text2`… |
 | Frame con dos o más textos (título y descripción, nombre y email) | se conserva ("frame11"): es contenido, no una etiqueta |
+| Capa con un nombre sin letras ("1", "02", "#3"): nunca sirve en código | por su texto, aunque esté más adentro ("2" con "2,245,341" y "Members" → `membersRow`); un texto, por su contenido si sirve; sin textos, el rol (`row`, `box`) |
 
 - Los nombres puestos por el diseñador no se tocan; los renombres quedan listados en `meta.notes`. Para otro nombre, escríbelo en la ventana del plugin (o renombra la capa en Figma).
-- El componente raíz **nunca** se renombra solo: si se llama "Frame 1", el extractor avisa y lo eliges con `--name`.
+- El componente raíz **nunca** se renombra solo: si se llama "Frame 1" (o "2"), el extractor avisa y lo eliges con `--name`. Un nombre sin letras se convierte en uno válido (`Componente2`) para que el código compile.
 - En un set de variantes, los nombres salen de la variante por defecto.
 
 ## Componentes React

@@ -74,7 +74,7 @@ async function analyze(node) {
 	for (const rep of repeats) for (const g of rep.groups) g.value = "";
 	figma.ui.postMessage({
 		type: "analysis",
-		root: { id: node.id, name: node.name, generic: isGeneric(node.name), value: "" },
+		root: { id: node.id, name: node.name, generic: isGeneric(node.name) || noLetters(node.name), value: "" },
 		rows,
 		repeats,
 	});
@@ -414,23 +414,45 @@ const REPEAT_MIN = 3;
 function isGeneric(name) {
 	return GENERIC.test(String(name).trim());
 }
+// Un nombre sin letras ("1", "02", "#3") no sirve en código: siempre es vago y la sugerencia gana
+function noLetters(name) {
+	return !/\p{L}/u.test(String(name || ""));
+}
+
 function vagueName(node) {
-	if (isGeneric(node.name)) return true;
+	if (isGeneric(node.name) || noLetters(node.name)) return true;
 	const chars = node.type === "TEXT" ? String(node.characters || "").trim() : null;
 	return chars !== null && String(node.name).trim() === chars && !usableText(chars);
 }
 function suggestName(node, parent, iconLike) {
-	if (node.type === "TEXT") return "text";
+	// Un texto con nombre sin letras ("1") se nombra por su contenido, si sirve
+	if (node.type === "TEXT") return (noLetters(node.name) && usableText(node.characters)) || "text";
 	if (iconLike) {
 		const near = textNear(node, parent);
 		return near ? `${near} Icon` : "icon";
 	}
-	const text = ownChildText(node);
-	if (!text) return null;
 	const role = repeated(node, parent)
 		? "Item"
 		: { HORIZONTAL: "Row", VERTICAL: "Column" }[node.layoutMode] || "Box";
-	return `${text} ${role}`;
+	const text = ownChildText(node);
+	if (text) return `${text} ${role}`;
+	// Sin letras en Figma no hay nombre al que volver: el primer texto que sirva, más adentro
+	// (en una estadística "2,245,341" + "Members" → membersRow), o solo el rol
+	if (noLetters(node.name)) {
+		const deep = firstUsableText(node);
+		return deep ? `${deep} ${role}` : role.toLowerCase();
+	}
+	return null;
+}
+
+// Primer texto del diseño que sirve de nombre, en profundidad (sin entrar en capas ocultas)
+function firstUsableText(node) {
+	for (const c of node.children || []) {
+		if (c.visible === false) continue;
+		const t = ownText(c) || firstUsableText(c);
+		if (t) return t;
+	}
+	return null;
 }
 function usableText(s) {
 	const t = String(s || "").replace(/\s+/g, " ").trim();

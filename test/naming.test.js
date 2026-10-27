@@ -447,3 +447,35 @@ test("decisiones v2: el nombre del componente también por fecha", () => {
 	const dec = decisionsFile(dv2(doc, { root: { name: "Tarjeta", at: at(4) } }));
 	assert.equal(extract(doc, ["--decisions", dec], plugin(doc)).spec.component.name, "Tarjeta");
 });
+
+// ---------------------------------------------------------------- nombres sin letras ("1", "02")
+test("sin letras: una estadística (número + etiqueta) toma la etiqueta, aunque esté más adentro", () => {
+	const stat = (n, value, label) => F(n, "HORIZONTAL", [V("Icon"), F("Details", "VERTICAL", [T(value), T(label)])]);
+	const r = extract(F("Achievements", "VERTICAL", [F("Row 1", "HORIZONTAL", [stat("2", "2,245,341", "Members"), stat("1", "46,328", "Clubs")])]));
+	assert.equal(r.cls("2"), "membersRow");
+	assert.equal(r.cls("1"), "clubsRow");
+	assert.equal(r.cls("Details"), "details", "lo que tiene nombre del diseñador no cambia");
+});
+
+test("sin letras: ítems numerados de una lista toman su texto + Item", () => {
+	const r = extract(F("List", "VERTICAL", ["Inicio", "Perfil", "Ajustes"].map((s, i) => F(String(i + 1), "HORIZONTAL", [T(s)]))));
+	assert.deepEqual(["1", "2", "3"].map(r.cls), ["inicioItem", "perfilItem", "ajustesItem"]);
+});
+
+test("sin letras: un texto llamado \"1\" se nombra por su contenido; un número, text", () => {
+	const r = extract(F("Card", "VERTICAL", [{ ...T("Members"), name: "1" }, { ...T("2,245,341"), name: "2" }]));
+	assert.equal(r.cls("1"), "members");
+	assert.equal(r.cls("2"), "text");
+});
+
+test("sin letras y sin textos: el rol solo (nunca el número)", () => {
+	const r = extract(F("Card", "VERTICAL", [F("01", "HORIZONTAL", [E("Ellipse 1")]), F("#2", "NONE", [E("Ellipse 2")])]));
+	assert.equal(r.cls("01"), "row");
+	assert.equal(r.cls("#2"), "box");
+});
+
+test("sin letras: el componente \"2\" tiene un nombre válido y se avisa", () => {
+	const r = extract(F("2", "VERTICAL", [T("Hola")]));
+	assert.equal(r.spec.component.name, "Componente2");
+	assert.ok(r.spec.meta.notes.some((n) => /se llama "2" en Figma/.test(n)));
+});
