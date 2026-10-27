@@ -209,9 +209,20 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   de nombres vagos con la sugerencia como placeholder, ⌖ para centrar la capa sin seleccionarla, y
   los renombres enviados por **id** en el paquete (`figspec: 2`, `names.byId`); el extractor los
   traduce a rutas (no se duplica la lógica de rutas en el plugin).
-- [ ] **Paso 4. Con el menú real (`figspec-menu.json`)**: clase compartida para repetidos (`.item`),
-  subcomponente (`MenuItem`) con props `label`/`icon`/`state` y estados deducidos (opacidad < 1 →
-  `disabled`, relleno que contrasta → `active`), con `aria-current`/`aria-disabled`.
+- [x] **Paso 4. Extraer repetidos a un subcomponente (`--extract-repeated`, opcional).**
+  Cada grupo repetido → subcomponente (nombre del diseñador si es común, si no `<Componente>Item`):
+  texto que cambia → `label`, ícono → `icon` (componente del ícono, conserva sus clases), visibilidad
+  → `show…`; cada grupo de estilos → un estado (`default` = el más numeroso, `disabled` = menor
+  opacidad, `active` = único ítem con otro fondo, numerados si se repiten). El padre usa instancias
+  con una clase de ubicación compartida. Los datos de ejemplo de una lista pasan a ser valores de
+  props (resuelve el límite del paso 1 en listas extraídas). Solo en componentes sin variantes.
+  _Verificado:_ menú real → `SideMenu` con 6 `<SideMenuItem state icon label>` (5 estados, por las
+  inconsistencias del diseño: "Pack" y "Logs" usan Roboto 500 · 14px en vez de Geist 700 · 12px);
+  captura en Chrome igual a la `preview.png`; `tsc --strict` sobre el menú, 7 JSON de prueba y 7
+  casos genéricos; 21 pruebas en `test/naming.test.js`. Sin la opción, la salida no cambia.
+  _Pendiente:_ `aria-current` / `aria-disabled` según el estado (no se puede saber con certeza qué
+  estado es cuál); nombrar estados desde el plugin (paso 3); extraer en componentes con variantes;
+  generar `items.map(...)` con un array de datos en lugar de instancias explícitas.
 
 ## P3
 

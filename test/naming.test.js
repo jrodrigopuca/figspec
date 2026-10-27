@@ -154,6 +154,57 @@ test("repetidos: menos de 3, instancias o estructuras distintas no cuentan", () 
 	assert.equal(instances.spec.component.repeated, undefined, "las instancias ya son un componente");
 });
 
+// ---------------------------------------------------------------- extraer repetidos (--extract-repeated)
+test("extracción: sin la opción, los repetidos solo se reportan", () => {
+	const r = extract(F("Tabs", "HORIZONTAL", ["A1", "B1", "C1"].map((s) => F("Tab", "HORIZONTAL", [T(s)]))));
+	assert.ok(r.spec.component.repeated);
+	assert.equal(r.spec.subcomponents, undefined);
+});
+
+test("extracción: el nombre del diseñador da el componente y el texto que cambia, la prop label", () => {
+	const r = extract(F("Tabs", "HORIZONTAL", ["Todos", "Activos", "Archivados"].map((s) => F("Tab", "HORIZONTAL", [T(s)]))), ["--extract-repeated"]);
+	const tab = r.spec.subcomponents.Tab;
+	assert.deepEqual(tab.props, { label: { type: "string" } });
+	assert.equal(tab.structure.children[0].bind.text, "label");
+	const uses = r.spec.component.structure.children;
+	assert.deepEqual(uses.map((u) => [u.component, u.className, u.props.label]), [["Tab", "item", "Todos"], ["Tab", "item", "Activos"], ["Tab", "item", "Archivados"]]);
+});
+
+test("extracción: estados desde los estilos (default, active, disabled) e ícono como prop", () => {
+	const item = (label, extra = {}) => F("Frame 1", "HORIZONTAL", [V("icon"), T(label)], extra);
+	const dark = { fills: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }] };
+	const doc = F("Nav", "VERTICAL", [item("Inicio", dark), item("Perfil"), item("Ajustes"), item("Salir", { opacity: 0.4 })]);
+	const r = extract(doc, ["--extract-repeated"], bundleWithIcons(doc, (n) => `<svg><path d="M${n.id.split(":")[0]}"/></svg>`));
+	const sub = r.spec.subcomponents.NavItem;
+	assert.deepEqual(sub.props.state.options, ["default", "active", "disabled"]);
+	assert.equal(sub.props.icon.type, "icon");
+	assert.deepEqual(sub.variantStyles.map((v) => v.when.state), ["active", "disabled"]);
+	assert.deepEqual(r.spec.component.structure.children.map((u) => u.props.state), ["active", "default", "default", "disabled"]);
+	assert.match(r.spec.component.structure.children[0].props.icon, /\/inicio\.svg$/);
+});
+
+test("extracción: varios textos que cambian → label, label2", () => {
+	const doc = F("Users", "VERTICAL", ["Ana", "Luis", "Eva"].map((n) => F("Row", "HORIZONTAL", [T(n), T(`${n}@mail.com`)])));
+	const r = extract(doc, ["--extract-repeated"]);
+	assert.deepEqual(Object.keys(r.spec.subcomponents.Row.props), ["label", "label2"]);
+	assert.deepEqual(r.spec.component.structure.children[2].props, { label: "Eva", label2: "Eva@mail.com" });
+});
+
+test("extracción: en un componente con variantes solo se reporta", () => {
+	const variant = (state) => ({
+		id: `${++seq}:1`, name: `State=${state}`, type: "COMPONENT", layoutMode: "VERTICAL", absoluteBoundingBox: box(100, 100),
+		children: ["a", "b", "c"].map((s) => F("Row", "HORIZONTAL", [T(s + state)])),
+	});
+	const set = {
+		id: `${++seq}:1`, name: "List", type: "COMPONENT_SET", absoluteBoundingBox: box(300, 100),
+		componentPropertyDefinitions: { State: { type: "VARIANT", defaultValue: "On", variantOptions: ["On", "Off"] } },
+		children: [variant("On"), variant("Off")],
+	};
+	const r = extract(set, ["--extract-repeated"]);
+	assert.equal(r.spec.subcomponents, undefined);
+	assert.ok(r.spec.meta.notes.some((n) => /solo se reportan/.test(n)));
+});
+
 // ---------------------------------------------------------------- raíz y variantes
 test("la raíz nunca se renombra sola; --name la elige", () => {
 	const doc = F("Frame 1", "HORIZONTAL", [T("Hola")]);

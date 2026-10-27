@@ -53,9 +53,16 @@ function componentModule(comp, env) {
 		images: new Map(), // ruta → variable importada
 		icons: false,
 		reactNode: false,
+		iconType: false,
 	};
-	for (const p of Object.keys(comp.props || {}))
-		g.vars[p] = RESERVED.has(p) || !IDENT.test(p) ? `${camelSafe(p)}Value` : p;
+	for (const [p, def] of Object.entries(comp.props || {}))
+		// Una prop de ícono es un componente: en JSX su variable va en mayúscula (<Icon />)
+		g.vars[p] =
+			def.type === "icon"
+				? pascal(p) || "IconProp"
+				: RESERVED.has(p) || !IDENT.test(p)
+					? `${camelSafe(p)}Value`
+					: p;
 
 	// Cada variante con estructura propia se resuelve con un return anticipado
 	const branches = (comp.variantStructures || []).map(
@@ -73,13 +80,15 @@ function componentModule(comp, env) {
 		.filter((p) => g.used.has(p))
 		.map((p) => {
 			const v = g.vars[p];
-			const head = v === p ? p : `${JSON.stringify(p)}: ${v}`;
+			const head = v === p ? p : `${IDENT.test(p) ? p : JSON.stringify(p)}: ${v}`;
 			return defaults[p] !== undefined ? `${head} = ${defaults[p]}` : head;
 		});
 	params.push("className");
 
 	const imports = [];
-	if (g.reactNode) imports.push('import type { ReactNode } from "react";');
+	const types = [g.reactNode && "ReactNode", g.iconType && "ComponentType", g.iconType && "SVGProps"];
+	if (types.some(Boolean))
+		imports.push(`import type { ${types.filter(Boolean).join(", ")} } from "react";`);
 	imports.push(`import styles from "./${comp.name}.module.css";`);
 	for (const c of [...g.components].sort())
 		imports.push(`import { ${c} } from "./${c}";`);
@@ -115,6 +124,10 @@ function tsType(def, g) {
 		g.reactNode = true;
 		return "ReactNode";
 	}
+	if (def.type === "icon") {
+		g.iconType = true;
+		return "ComponentType<SVGProps<SVGSVGElement>>";
+	}
 	return "unknown";
 }
 
@@ -125,10 +138,11 @@ function propDefaults(comp) {
 	(function scan(el) {
 		if (el.bind && el.bind.visible && !(el.bind.visible in found))
 			found[el.bind.visible] = !el.hidden;
-		if (el.bind && el.bind.text && !(el.bind.text in found))
+		// Sin texto en el diseño (p. ej. el label de un ítem extraído) no hay valor por defecto
+		if (el.bind && el.bind.text && !(el.bind.text in found) && (el.text !== undefined || el.segments))
 			found[el.bind.text] = el.text !== undefined
 				? el.text
-				: (el.segments || []).map((s) => s.text).join("");
+				: el.segments.map((s) => s.text).join("");
 		(el.children || []).forEach(scan);
 	})(comp.structure);
 	for (const [p, def] of Object.entries(comp.props || {})) {
@@ -149,6 +163,12 @@ function propDefaults(comp) {
 function renderEl(el, g, n, isRoot) {
 	let jsx;
 	if (el.bind && el.bind.swap) jsx = pad(n) + `{${useVar(el.bind.swap, g)}}`;
+	else if (el.bind && el.bind.icon) {
+		// Ícono recibido como prop (componente): se dibuja con las clases de esta posición
+		const Icon = useVar(el.bind.icon, g);
+		const cls = classAttr(el, g, false);
+		jsx = `${pad(n)}{${Icon} && <${Icon}${cls ? " " + cls : ""} />}`;
+	}
 	else if (el.component) jsx = renderInstance(el, g, n);
 	else if (el.tag === "svg") jsx = renderIcon(el, g, n);
 	else if (el.tag === "img") jsx = renderImage(el, g, n);
@@ -224,6 +244,13 @@ function renderInstance(el, g, n) {
 function propValue(v, type, g) {
 	if (v === null || v === undefined) return null;
 	if (type === "boolean" || typeof v === "boolean") return String(v === true || v === "true");
+	if (type === "icon") {
+		// La prop recibe el componente del ícono que corresponde a ese archivo
+		const icon = typeof v === "string" && g.env.icons.get(v);
+		if (!icon) return null;
+		g.icons = true;
+		return `Icons.${icon.name}`;
+	}
 	if (type === "node" || type === "slot") {
 		// Un swap apunta a otro componente: solo se puede pasar si también se generó
 		if (typeof v === "string" && g.env.subs[v]) {

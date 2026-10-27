@@ -22,6 +22,8 @@
  *   --shallow         No describe los subcomponentes, solo cómo se usan.          FIGMA_SHALLOW=true
  *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
  *   --react           Genera además componentes React (TypeScript), ver react.js.  FIGMA_REACT=true
+ *   --extract-repeated  Extrae los ítems repetidos a un subcomponente con props y estados.
+ *                                                                               FIGMA_EXTRACT_REPEATED=true
  *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
  *
  * Cada ejecución reemplaza la salida anterior: borra solo los archivos que generó antes
@@ -80,6 +82,7 @@ const opts = {
 	png: envFlag("FIGMA_PNG", true),
 	shallow: envFlag("FIGMA_SHALLOW", false),
 	react: envFlag("FIGMA_REACT", false),
+	extractRepeated: envFlag("FIGMA_EXTRACT_REPEATED", false),
 };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -93,6 +96,8 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--css") opts.css = true;
 	else if (a === "--no-css") opts.css = false;
 	else if (a === "--react") opts.react = true;
+	else if (a === "--extract-repeated") opts.extractRepeated = true;
+	else if (a === "--no-extract-repeated") opts.extractRepeated = false;
 	else if (a === "--no-react") opts.react = false;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--name") opts.name = argv[++i];
@@ -187,6 +192,7 @@ function main() {
 	for (const comp of [component, ...Object.values(subcomponents)]) {
 		const rep = findRepeated(comp);
 		if (rep.length) comp.repeated = rep;
+		if (opts.extractRepeated) extractRepeated(comp, subcomponents);
 	}
 
 	const result = {
@@ -1593,6 +1599,10 @@ function notes(subs) {
 		n.push(
 			'repeated: grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas). "varies" dice qué cambia entre ellos, por clase del primero: propiedades CSS, "text", "src" (ícono) o "hidden"; "styleGroups" agrupa los que tienen estilos idénticos (posibles estados: activo, deshabilitado…). Son candidatos a un subcomponente renderizado con items.map(...).',
 		);
+	if (Object.values(subs).some((s) => s.extractedFrom))
+		n.push(
+			'--extract-repeated: los grupos repetidos se extrajeron a subcomponentes ("extractedFrom"): lo que cambia entre ítems es una prop (label = texto, icon = componente de ícono, show… = visibilidad) y cada grupo de estilos, un estado (state). Estados deducidos: default = el grupo más numeroso; disabled = menor opacidad; active = único ítem con otro fondo; con número si se repiten (disabled2). Renómbralos si el diseño tiene nombres mejores.',
+		);
 	if (ctx.renamed.size) {
 		const list = [...ctx.renamed].map(([cls, from]) => `${from} → ${cls}`);
 		n.push(
@@ -1940,6 +1950,265 @@ function describeRepeated(parent, items, comp) {
 	return rep;
 }
 
+// ---------------------------------------------------------------- extraer repetidos (--extract-repeated)
+// Cada grupo repetido pasa a ser un subcomponente: lo que cambia entre los ítems se vuelve props
+// (texto → label, ícono → icon, visibilidad → booleano) y cada grupo de estilos, un estado. El
+// padre lo usa como a cualquier instancia: su clase lleva la ubicación (tamaño, flex).
+const PLACEMENT = new Set([
+	"position", "top", "right", "bottom", "left", "width", "height", "min-width", "max-width",
+	"min-height", "max-height", "flex", "flex-grow", "flex-shrink", "flex-basis", "align-self",
+	"justify-self", "grid-column", "grid-row", "order", "margin",
+]);
+
+function extractRepeated(comp, subs) {
+	if (!comp.repeated) return;
+	if (comp.variantStyles || comp.variantStructures || comp.variantText || comp.variantProps) {
+		ctx.notes.add(
+			`--extract-repeated: ${comp.name} tiene variantes; sus estructuras repetidas solo se reportan (repeated).`,
+		);
+		return;
+	}
+	for (const rep of comp.repeated) {
+		const parent = findEl(comp.structure, rep.parent);
+		const items = parent && rep.items.map((c) => (parent.children || []).find((k) => k.className === c));
+		if (!items || items.some((i) => !i)) continue; // estaba dentro de un grupo ya extraído
+		const sub = repeatedSub(comp, parent, items, rep);
+		if (!sub) continue;
+		subs[sub.name] = sub;
+		rep.extractedAs = sub.name;
+	}
+}
+
+function findEl(el, cls) {
+	if (el.className === cls) return el;
+	for (const c of el.children || []) {
+		const f = findEl(c, cls);
+		if (f) return f;
+	}
+	return null;
+}
+
+function repeatedSub(comp, parent, items, rep) {
+	const styleOf = (el) => comp.styles[el.className] || {};
+	const content = (el) =>
+		el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
+	const at = (item, p) => p.reduce((e, i) => e.children[i], item);
+	const distinct = (vals) => new Set(vals.map((v) => JSON.stringify(v))).size;
+
+	// Grupos de estilo → estados. El más numeroso es "default" y define la estructura base.
+	const groups = rep.styleGroups || [items.map((i) => i.className)];
+	const reps = groups.map((g) => items.find((i) => i.className === g[0]));
+	const def = groups.reduce((best, g, i) => (g.length > groups[best].length ? i : best), 0);
+	const states = stateNames(groups, reps, def, styleOf);
+	const stateOf = new Map();
+	groups.forEach((g, i) => g.forEach((c) => stateOf.set(c, states[i])));
+	const tplItem = reps[def];
+
+	// Recorrido en paralelo: cada posición del árbol con su elemento en cada ítem
+	const props = {};
+	if (groups.length > 1)
+		props.state = {
+			type: "variant",
+			options: ["default", ...new Set(states.filter((s) => s !== "default"))],
+			default: "default",
+		};
+	const sources = []; // { prop, path, kind } → valor de la prop en cada ítem
+	const taken = new Set(["root"]);
+	const unique = (base) => {
+		let n = base;
+		for (let k = 2; taken.has(n); k++) n = numbered(base, k);
+		taken.add(n);
+		return n;
+	};
+	const varyingTexts = [];
+	(function scan(els, p) {
+		if (els[0].tag === "span" && distinct(els.map(content)) > 1) varyingTexts.push(p.join("."));
+		(els[0].children || []).forEach((_, i) => scan(els.map((e) => e.children[i]), [...p, i]));
+	})(items, []);
+
+	const styles = {};
+	const perState = new Map(states.map((s) => [s, {}]));
+	const instClasses = new Set();
+	let ok = true;
+	function build(p, isRoot) {
+		const els = items.map((it) => at(it, p));
+		const tpl = at(tplItem, p);
+		if (els.some((e) => (e.children || []).length !== (tpl.children || []).length)) ok = false;
+		const sameName = els.every((e) => e.name === tpl.name) && !isGeneric(tpl.name);
+		const el = { name: tpl.name };
+		if (tpl.tag) el.tag = tpl.tag;
+		let cls;
+		if (isRoot) cls = "root";
+		else if (tpl.tag === "span" && varyingTexts.includes(p.join("."))) {
+			const prop =
+				sameName && tpl.name !== content(tpl)
+					? camel(tpl.name)
+					: varyingTexts.length === 1
+						? "label"
+						: `label${varyingTexts.indexOf(p.join(".")) + 1}`.replace(/1$/, "");
+			cls = unique(prop);
+			el.bind = { text: prop };
+			props[prop] = { type: "string" };
+			sources.push({ prop, path: p, kind: "text" });
+		} else if (tpl.tag === "svg") {
+			cls = unique("icon");
+			if (distinct(els.map((e) => e.src)) > 1) {
+				const prop = Object.keys(props).includes("icon") ? `icon${cls.replace(/^icon/, "")}` : "icon";
+				el.bind = { icon: prop };
+				props[prop] = { type: "icon" };
+				sources.push({ prop, path: p, kind: "icon" });
+			} else {
+				el.src = tpl.src;
+				el.icon = tpl.icon;
+			}
+			if (tpl.multicolor) el.multicolor = true;
+		} else {
+			cls = unique(sameName ? camel(tpl.name) : tpl.tag === "span" ? "text" : "box");
+			if (tpl.tag === "span") {
+				if (tpl.text !== undefined) el.text = tpl.text;
+				if (tpl.segments) el.segments = tpl.segments;
+			}
+		}
+		el.className = cls;
+		if (tpl.textStyle) el.textStyle = tpl.textStyle;
+		if (tpl.component) {
+			// Instancia dentro del ítem: sus props tienen que ser iguales en todos
+			if (distinct(els.map((e) => e.props || {})) > 1) ok = false;
+			el.component = tpl.component;
+			if (tpl.props) el.props = tpl.props;
+			instClasses.add(cls);
+		}
+		if (distinct(els.map((e) => !!e.hidden)) > 1) {
+			const prop = `show${pascal(cls)}`;
+			el.bind = { ...(el.bind || {}), visible: prop };
+			props[prop] = { type: "boolean" };
+			sources.push({ prop, path: p, kind: "visible" });
+		} else if (tpl.hidden) el.hidden = true;
+
+		// Estilos por estado (cada estado toma los de un ítem representativo)
+		// El tamaño de un ícono depende del dibujo: si cambia dentro de un mismo estado no se puede
+		// expresar por estado y se usa el del SVG (que Figma exporta redondeado a enteros)
+		const size = (e) => [styleOf(e).width, styleOf(e).height];
+		const svgSize =
+			tpl.tag === "svg" &&
+			groups.some((g) => distinct(g.map((c) => size(at(items.find((i) => i.className === c), p)))) > 1);
+		groups.forEach((g, gi) => {
+			const s = { ...styleOf(at(reps[gi], p)) };
+			for (const k of Object.keys(s))
+				// La raíz deja la ubicación al padre; un ícono cuyo tamaño cambia según el
+				// dibujo usa el del propio SVG
+				if ((isRoot && PLACEMENT.has(k)) || (svgSize && (k === "width" || k === "height")))
+					delete s[k];
+			perState.get(states[gi])[cls] = s;
+		});
+		if (tpl.children) el.children = tpl.children.map((_, i) => build([...p, i], false));
+		return el;
+	}
+	const structure = build([], true);
+	if (!ok) {
+		ctx.notes.add(
+			`--extract-repeated: los ítems de ${comp.name} (${items[0].className}…) no se extrajeron: difieren en algo que no se puede expresar como prop.`,
+		);
+		return null;
+	}
+
+	// Estilos base (estado default) y diferencias por estado
+	const base = perState.get("default");
+	Object.assign(styles, base);
+	const variantStyles = [];
+	for (const s of new Set(states)) {
+		if (s === "default") continue;
+		const diff = {};
+		for (const [cls, decl] of Object.entries(perState.get(s))) {
+			const b = base[cls] || {};
+			for (const k of new Set([...Object.keys(b), ...Object.keys(decl)]))
+				if (b[k] !== decl[k]) (diff[cls] = diff[cls] || {})[k] = decl[k] === undefined ? "unset" : decl[k];
+		}
+		if (Object.keys(diff).length) variantStyles.push({ when: { state: s }, styles: diff });
+	}
+	for (const cls of Object.keys(styles)) if (!Object.keys(styles[cls]).length) delete styles[cls];
+
+	const common = items.every((i) => i.name === items[0].name) && !isGeneric(items[0].name);
+	const figmaName = common ? items[0].name : `${comp.figmaName} item`;
+	const sub = {
+		name: codeName(common ? items[0].name : `${comp.name} Item`),
+		figmaName,
+		props,
+	};
+	if (props.state) sub.defaultVariant = { state: "default" };
+	sub.structure = structure;
+	sub.styles = styles;
+	if (variantStyles.length) sub.variantStyles = variantStyles;
+	sub.extractedFrom = comp.name;
+	ctx.instanceClasses.set(sub, instClasses);
+
+	// El padre: una instancia por ítem; la ubicación va en una clase compartida si es igual en todos
+	const placement = (it) =>
+		Object.fromEntries(Object.entries(styleOf(it)).filter(([k]) => PLACEMENT.has(k)));
+	const shared = distinct(items.map(placement)) === 1;
+	const parentTaken = new Set(Object.keys(comp.styles));
+	const removed = new Set();
+	for (const it of items)
+		(function drop(e) {
+			removed.add(e.className);
+			ctx.renamed.delete(e.className); // esa clase ya no existe en el padre
+			(e.children || []).forEach(drop);
+		})(it);
+	let placeCls = null;
+	if (shared) {
+		for (const c of removed) parentTaken.delete(c);
+		placeCls = "item";
+		for (let k = 2; parentTaken.has(placeCls); k++) placeCls = numbered("item", k);
+	}
+	const newStyles = {};
+	for (const [cls, decl] of Object.entries(comp.styles)) {
+		if (cls === items[0].className && shared) newStyles[placeCls] = placement(items[0]);
+		if (!removed.has(cls)) newStyles[cls] = decl;
+		else if (!shared && items.some((i) => i.className === cls)) newStyles[cls] = placement(findEl(parent, cls));
+	}
+	comp.styles = newStyles;
+	const instances = ctx.instanceClasses.get(comp);
+	parent.children = parent.children.map((k) => {
+		if (!items.includes(k)) return k;
+		const inst = { name: k.name, className: shared ? placeCls : k.className, component: sub.name };
+		const p = {};
+		if (props.state) p.state = stateOf.get(k.className);
+		for (const s of sources) {
+			const e = at(k, s.path);
+			p[s.prop] = s.kind === "text" ? content(e) : s.kind === "icon" ? e.src : !e.hidden;
+		}
+		if (Object.keys(p).length) inst.props = p;
+		instances.add(inst.className);
+		return inst;
+	});
+	return sub;
+}
+
+// Nombres de estado a partir de cómo se ve cada grupo frente al más numeroso (default):
+// menos opacidad → disabled; un único ítem con otro fondo → active; si no, default. Si un nombre
+// se repite se numera (disabled2, default2): son estados distintos en el diseño.
+function stateNames(groups, reps, def, styleOf) {
+	const op = (el) => parseFloat(styleOf(el).opacity || "1");
+	const bg = (el) => styleOf(el)["background-color"] || styleOf(el).background || "";
+	const names = [];
+	const taken = new Set(["default"]);
+	names[def] = "default";
+	groups.forEach((g, i) => {
+		if (i === def) return;
+		const base =
+			op(reps[i]) < op(reps[def])
+				? "disabled"
+				: g.length === 1 && bg(reps[i]) !== bg(reps[def])
+					? "active"
+					: "default";
+		let name = base;
+		for (let n = 2; taken.has(name); n++) name = `${base}${n}`;
+		taken.add(name);
+		names[i] = name;
+	});
+	return names;
+}
+
 // Al menos 3 hermanos (contándose) con la misma firma
 const REPEAT_MIN = 3;
 function repeated(node, parent) {
@@ -1996,8 +2265,9 @@ El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
 También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
 
 Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT (true/false).
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_EXTRACT_REPEATED (true/false).
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
+--extract-repeated convierte los grupos repetidos (3+ hermanos iguales) en un subcomponente con props y estados.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
 Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);
 }

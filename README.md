@@ -47,6 +47,7 @@ figma-menu/                  carpeta de salida
 | `--shallow` / `--no-shallow` | `FIGMA_SHALLOW` | No describe los subcomponentes, solo cómo se usan |
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
 | `--react` / `--no-react` | `FIGMA_REACT` | Genera además componentes React en TypeScript (ver abajo) |
+| `--extract-repeated` | `FIGMA_EXTRACT_REPEATED` | Convierte los ítems repetidos en un subcomponente con props y estados (ver abajo) |
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
 
@@ -89,6 +90,20 @@ import { Card } from "./components/Card"; // la subcarpeta copiada a tu proyecto
 - Lo que cambia por variante (estilos, textos, props de subcomponentes y estructura) se resuelve dentro del componente.
 - Requisitos del proyecto: TypeScript, React 17+ con el JSX automático, y un bundler con CSS Modules e importación de imágenes (Vite, Next.js y Create React App lo traen). `tokens.css` es opcional: cada `var()` lleva su valor de Figma como respaldo; impórtalo una vez de forma global si quieres usar los tokens.
 - Los archivos se regeneran en cada ejecución: no los edites a mano; envuélvelos o extiéndelos desde tus propios componentes.
+
+### Ítems repetidos
+
+Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructura (ítems de un menú, filas de una lista, tarjetas) pasa a ser un subcomponente:
+
+```tsx
+<SideMenuItem className={styles.item} state="active" icon={Icons.Dashboard} label="Dashboard" />
+<SideMenuItem className={styles.item} state="disabled" icon={Icons.Voices} label="Voices" />
+```
+
+- Lo que cambia entre ítems es una prop: el texto → `label` (`label2`…), el ícono → `icon` (recibe el componente del ícono), la visibilidad → un booleano.
+- Cada grupo de estilos distinto es un estado (`state`): `default` es el grupo más numeroso, `disabled` el de menor opacidad, `active` un único ítem con otro fondo; si un nombre se repite se numera (`disabled2`). Si dos ítems difieren por una inconsistencia del diseño (p. ej. otra tipografía), aparece como un estado más: revisa `repeated` en `component.json`.
+- El subcomponente se llama como los ítems si el diseñador les puso nombre ("Tab" → `Tab`); si no, `<Componente>Item`.
+- Por ahora solo en componentes sin variantes (en los demás, los repetidos se reportan pero no se extraen).
 
 ## Cómo usar la salida
 
