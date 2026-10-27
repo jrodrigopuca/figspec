@@ -135,9 +135,18 @@ carpeta aparte):
   - Vista previa por variante para lo que no es un set (por ejemplo, una instancia con otro estado
     o los textos cambiados): requiere `figspec: 3` en el plugin. _Decisión pendiente:_ si vale la
     pena, ahora que un set ya muestra cada variante. Por defecto: no.
-  - _Idea del usuario (2026-10-27), a decidir:_ usar el visualizador para renombrar capas, definir
-    subcomponentes y agrupar componentes parecidos. Ver la propuesta y sus decisiones abiertas
-    abajo, en "Decisiones del visualizador como editor".
+  - [x] Renombrar desde el visualizador y archivo de decisiones (2026-10-27, idea del usuario).
+    `id` de Figma en cada elemento de component.json (ignorado al comparar estructuras de
+    variantes); `--decisions`/`FIGMA_DECISIONS` lee `figspec-<nombre>.decisions.json` (`figspec:
+    "decisions"`, `version: 1`, `component`, `names: { root, byId, states }`, la misma forma que
+    `names` del paquete) y gana sobre los nombres del plugin (`--name` gana sobre todo); aviso si
+    es de otro componente; lo aplicado queda en `meta.decisions`; `meta.source.bundle` guarda el
+    nombre del paquete. En el visualizador (con Código): campo "Nombre en código" / "Nombre del
+    componente" con la clase resultante, ✎ en el árbol, cambios pendientes guardados en
+    localStorage, "Descargar decisiones" (incluye lo ya aplicado), "Quitar" y el comando para
+    regenerar. Validado: salida igual a la anterior salvo `id` y `meta` en 28 salidas; en Chrome,
+    el ciclo completo con el menú real (renombrar → descargar → extractor → visualizador nuevo →
+    quitar uno y sumar otro); 6 pruebas del extractor y 3 del visualizador.
   - Inconsistencias clicables: `inconsistencies.md` no apunta a una capa concreta; hace falta la
     ruta o el id en los datos.
   - Pestañas de tokens, íconos, notas e inconsistencias (fase 4).
@@ -153,20 +162,24 @@ carpeta aparte):
     respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif), en
     el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
     una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
-  - _Decisiones del visualizador como editor (idea del usuario, 2026-10-27):_
-    1. Dónde vive lo decidido. El visualizador es un archivo estático: no puede volver a correr el
-       extractor ni escribir en Figma. Propuesta: exporta un archivo de decisiones
-       (`figspec-decisions.json`: nombres por id de nodo, subcomponentes, grupos) que el
-       extractor lee con `--decisions`; los nombres también se pueden llevar al plugin para que
-       queden en Figma. Por defecto: una sola fuente para los nombres (Figma, con el plugin) y el
-       archivo de decisiones solo para lo que el plugin no puede expresar.
-    2. Renombrar: lo más útil y lo más simple (se ve el nombre en contexto y la clase que
-       resulta). Requiere que cada capa lleve su id de Figma en component.json (hoy no).
+  - _Visualizador como editor (idea del usuario, 2026-10-27), lo que sigue:_
+    1. Llevar las decisiones a Figma: "Importar decisiones" en el plugin, que guarde los nombres
+       con `setPluginData` (hoy viven solo en el archivo). _Decisión pendiente:_ si los nombres
+       deben tener una sola fuente (Figma) o alcanza con el archivo junto al paquete. Por
+       defecto: el archivo, hasta que se pida.
+    2. Renombrar los estados de los ítems repetidos (`names.states`) y los subcomponentes desde
+       el visualizador: el archivo ya admite `states`; falta la interfaz. Los nombres de los
+       subcomponentes de Figma no se pueden cambiar todavía (ni en el plugin).
     3. Definir un subcomponente a partir de una capa: el extractor ya sabe extraer (los
-       repetidos); hace falta permitirlo para una capa elegida, sin repetición.
+       repetidos); hace falta permitirlo para una capa elegida, sin repetición, y llevarlo al
+       archivo de decisiones.
     4. Agrupar componentes parecidos como uno (con variantes o props): lo más difícil; hay que
-       decidir qué hacer con las diferencias de estructura. Después de 2 y 3.
-    5. Se relaciona con "nombres que sobrevivan a copias nuevas del original" (pospuesto).
+       decidir qué hacer con las diferencias de estructura. Después de 3.
+    5. El nombre al quitar una decisión no se puede anticipar en el visualizador (lo vuelve a
+       elegir el extractor: el de Figma o su sugerencia): se muestra "el que elija el extractor".
+       Mejora posible: guardar la sugerencia original en component.json.
+    6. Se relaciona con "nombres que sobrevivan a copias nuevas del original" (pospuesto): los
+       id cambian en una copia nueva del componente.
   - _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
     deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
     comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una

@@ -328,3 +328,61 @@ test("variantes: el nombre elegido en el plugin es el del ítem en la variante p
 		names: { byId: {}, states: { [first.id]: "current" } } });
 	assert.deepEqual(r.spec.subcomponents.Row.props.state.options, ["default", "current", "off"]);
 });
+
+// ---------------------------------------------------------------- archivo de decisiones (--decisions)
+const decisionsFile = (d) => {
+	const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "figspec-dec-")), "x.decisions.json");
+	fs.writeFileSync(f, JSON.stringify({ figspec: "decisions", version: 1, ...d }));
+	return f;
+};
+const plugin = (doc, names) => ({ figspec: 2, name: doc.name, nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {}, ...(names ? { names } : {}) });
+
+test("decisiones: renombran cualquier capa por id, también las que el diseñador nombró", () => {
+	const doc = F("Card", "VERTICAL", [F("Frame 5", "HORIZONTAL", [T("Benefits")]), F("Header", "HORIZONTAL", [T("Hola")])]);
+	const [frame, header] = doc.children;
+	const r = extract(doc, ["--decisions", decisionsFile({ component: doc.id, names: { byId: { [frame.id]: "benefitRow", [header.id]: "top bar" } } })], plugin(doc));
+	assert.equal(r.cls("Frame 5"), "benefitRow");
+	assert.equal(r.cls("Header"), "topBar");
+	assert.deepEqual(r.spec.meta.decisions, { names: { byId: { [frame.id]: "benefitRow", [header.id]: "top bar" }, states: {} } });
+});
+
+test("decisiones: cada elemento lleva su id de Figma", () => {
+	const doc = F("Card", "VERTICAL", [T("Hola")]);
+	const r = extract(doc, [], plugin(doc));
+	assert.equal(r.spec.component.structure.id, doc.id);
+	assert.equal(r.spec.component.structure.children[0].id, doc.children[0].id);
+});
+
+test("decisiones: ganan sobre los nombres del plugin; --name gana sobre todo", () => {
+	const doc = F("Frame 1", "VERTICAL", [F("Frame 5", "HORIZONTAL", [T("Benefits")])]);
+	const id = doc.children[0].id;
+	const bundle = plugin(doc, { root: "DelPlugin", byId: { [id]: "delPlugin" } });
+	const dec = decisionsFile({ component: doc.id, names: { root: "DeDecisiones", byId: { [id]: "deDecisiones" } } });
+	const r = extract(doc, ["--decisions", dec], bundle);
+	assert.equal(r.spec.component.name, "DeDecisiones");
+	assert.equal(r.cls("Frame 5"), "deDecisiones");
+	assert.equal(extract(doc, ["--decisions", dec, "--name", "Manual"], bundle).spec.component.name, "Manual");
+	assert.equal(extract(doc, [], bundle).cls("Frame 5"), "delPlugin", "sin decisiones, los del plugin");
+});
+
+test("decisiones: de otro componente se avisa y se aplican las capas que existan", () => {
+	const doc = F("Card", "VERTICAL", [F("Frame 5", "HORIZONTAL", [T("Benefits")])]);
+	const r = extract(doc, ["--decisions", decisionsFile({ component: "99:99", names: { byId: { [doc.children[0].id]: "fila", "1:1": "otra" } } })], plugin(doc));
+	assert.equal(r.cls("Frame 5"), "fila");
+	assert.ok(r.spec.meta.notes.some((n) => /son de otro componente/.test(n)));
+	assert.ok(r.spec.meta.notes.some((n) => /no corresponden a ninguna capa/.test(n)), "el nombre de una capa que no existe se informa");
+});
+
+test("decisiones: estados de los ítems repetidos", () => {
+	const item = (label, extra) => F("Item", "HORIZONTAL", [T(label)], extra);
+	const doc = F("List", "VERTICAL", [item("Uno"), item("Dos"), item("Tres"), item("Cuatro", { opacity: 0.4 })]);
+	const r = extract(doc, ["--extract-repeated", "--decisions", decisionsFile({ component: doc.id, names: { states: { [doc.children[3].id]: "apagado" } } })], plugin(doc));
+	assert.deepEqual(r.spec.subcomponents.Item.props.state.options, ["default", "apagado"]);
+});
+
+test("decisiones: un archivo que no es de decisiones falla con un mensaje claro", () => {
+	const doc = F("Card", "VERTICAL", [T("Hola")]);
+	const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "figspec-dec-")), "x.json");
+	fs.writeFileSync(f, JSON.stringify({ names: {} }));
+	assert.throws(() => extract(doc, ["--decisions", f], plugin(doc)), /no es un archivo de decisiones/);
+});

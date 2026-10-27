@@ -57,6 +57,7 @@ figma-menu/                  carpeta de salida
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
 | `--react` / `--no-react` | `FIGMA_REACT` | Genera además componentes React en TypeScript (ver abajo) |
 | `--viewer` / `--no-viewer` | `FIGMA_VIEWER` | Genera además `viewer.html`, el visualizador (ver abajo) |
+| `--decisions <archivo>` | `FIGMA_DECISIONS` | Aplica los nombres decididos en el visualizador (ver abajo) |
 | `--extract-repeated` | `FIGMA_EXTRACT_REPEATED` | Convierte los ítems repetidos en un subcomponente con props y estados (ver abajo) |
 
 Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
@@ -123,6 +124,7 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 - Las instancias de otros componentes reciben su ubicación (tamaño, flex, posición) vía `className` desde el módulo del padre.
 - Los íconos monocromos usan `currentColor`: su color sale de `color` en CSS, siempre que el SVG vaya inline (por ejemplo, con SVGR).
 - `component.json` incluye `meta.notes` con las convenciones y aproximaciones aplicadas a ese componente.
+- Cada elemento de `structure` lleva el `id` de su capa en Figma (sirve para encontrarla y para el archivo de decisiones).
 - `meta.format` es la versión del formato de `component.json` (hoy `1`); cambia si la estructura deja de ser compatible. Con la vista previa del plugin, `meta.preview` indica cómo superponerla al componente: `{ file, width, height, scale, offset }`, donde `offset` es la posición del componente dentro de la imagen en píxeles de la imagen (la imagen puede ser más grande por sombras o desenfoques). En un set, `meta.preview.variants` trae la posición y el tamaño de cada variante en la imagen (`{ when, offset, width, height }`).
 - `inconsistencies.md` (solo si hay alguna) lista posibles errores del diseño para revisar con UX: elementos repetidos que difieren solo en tipografía, colores escritos a mano que coinciden con un estilo o variable, y textos con los valores de un estilo de texto que no lo aplican. Usa los nombres de capa de Figma para que sea fácil encontrarlos.
 - Si el texto se ve más grueso que en Figma (Chrome en macOS), agrega en tu CSS global `-webkit-font-smoothing: antialiased`: Figma dibuja el texto con un suavizado más fino. Es una decisión de tu proyecto, no del componente.
@@ -172,6 +174,21 @@ El interruptor **Código** está apagado por defecto: así la vista sirve a quie
 
 - En el árbol, las clases (`.label`) y los componentes (`<Tag>`) en lugar de los nombres de Figma; `{title}` marca un texto que viene de una prop y `si {showIcon}`, una capa que se muestra según una prop.
 - En el inspector, el CSS de la capa tal como está en los `.module.css`, agrupado por origen: la regla base, las de la variante que se está viendo y, en una instancia, su ubicación desde el componente padre; cada grupo con su archivo y su selector. Los tokens se ven como chips con su color ("Ver valores" muestra el valor en lugar del nombre) y "Copiar CSS" copia los grupos. No muestra estilos calculados por el navegador.
+
+### Renombrar
+
+Con **Código** prendido, el inspector tiene un campo **Nombre en código** para la capa elegida (o **Nombre del componente**, en la raíz) y muestra la clase que va a resultar. Los cambios se marcan con ✎ en el árbol y se juntan arriba del inspector; se guardan en el navegador, así no se pierden al recargar. Para aplicarlos:
+
+1. **Descargar decisiones** guarda `figspec-<nombre>.decisions.json` (mismo nombre que el paquete del plugin).
+2. Vuelve a generar la salida con ese archivo; el visualizador muestra el comando:
+
+   ```sh
+   node extractor.js figspec-menu-mobile.json --decisions figspec-menu-mobile.decisions.json --viewer
+   ```
+
+El archivo usa los id de Figma de cada capa, así que sigue valiendo si exportas de nuevo el mismo componente. Sus nombres ganan sobre los elegidos en el plugin (y `--name` gana sobre todo). Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos. **Quitar** descarta un cambio o, si ya estaba aplicado, lo saca del archivo para que el extractor vuelva a elegir el nombre.
+
+Por ahora los nombres viven en ese archivo, no en Figma: guárdalo junto al paquete.
 
 ### Avisos y diferencias esperables
 

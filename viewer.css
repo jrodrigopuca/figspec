@@ -155,6 +155,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-css li { display: block; }
 .fv-prop { color: var(--fv-muted); }
 .fv-token { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--fv-accent) 16%, transparent); }
+.fv-rename { display: flex; gap: 6px; }
+.fv-rename input { flex: 1; min-width: 0; font: 13px ui-monospace, Menlo, monospace; color: var(--fv-text); background: var(--fv-bg); border: 1px solid var(--fv-line); border-radius: 6px; padding: 3px 6px; }
+.fv-renamed { color: var(--fv-warn-text); font-style: italic; }
+.fv-decisions { background: var(--fv-warn-bg); color: var(--fv-warn-text); border-radius: 8px; padding: 8px 10px; margin-bottom: 14px; }
+.fv-decisions[hidden] { display: none; }
+.fv-decisions h3 { margin: 0 0 6px; font-size: 12px; }
+.fv-decisions ul { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; }
+.fv-decisions li { display: block; padding: 1px 0; }
+.fv-decisions .fv-link { color: inherit; text-decoration: underline; }
+.fv-decisions .fv-hint { color: inherit; opacity: .85; font-size: 11px; margin: 0; }
+.fv-decisions code { word-break: break-all; }
 .fv-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--fv-line); vertical-align: -1px; margin-right: 3px; }
 .fv-crumbs { margin-bottom: 8px; line-height: 1.6; }
 .fv-link { border: 0; background: none; padding: 0; color: var(--fv-accent); }

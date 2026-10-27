@@ -424,6 +424,41 @@ function previewFor(data, compName, values) {
 	return { offset, crop, exact: !changed, reason: changed ? "props" : null };
 }
 
+// ---------------------------------------------------------------- decisiones (renombrar)
+// Clase que dará el extractor a un nombre (como classFor: camelCase, sin empezar con número, sin
+// "root"); si ya está tomada, el extractor le agrega un número
+function codeClass(name) {
+	let c = spec.words(name).map((w, i) => (i ? w[0].toUpperCase() : w[0].toLowerCase()) + w.slice(1)).join("");
+	if (!c) c = "el";
+	if (/^[0-9]/.test(c)) c = "el" + c;
+	return c === "root" ? "rootEl" : c;
+}
+
+// Nombre del componente en código (como codeName del extractor)
+function codeComponent(name) {
+	return spec.pascal(name) || "Componente";
+}
+
+// Archivo de decisiones para el extractor (--decisions): lo ya aplicado (meta.decisions) más los
+// cambios nuevos. pending: { root?: nombre | null, byId: { id: nombre | null } }; null quita una
+// decisión anterior.
+function decisionsDoc(meta, pending) {
+	const base = (meta.decisions && meta.decisions.names) || {};
+	const byId = { ...(base.byId || {}) };
+	for (const [id, v] of Object.entries(pending.byId || {})) {
+		if (v === null) delete byId[id];
+		else byId[id] = v;
+	}
+	let root = base.root;
+	if ("root" in pending) root = pending.root === null ? undefined : pending.root;
+	return {
+		figspec: "decisions",
+		version: 1,
+		component: (meta.source && meta.source.node) || null,
+		names: { ...(root ? { root } : {}), byId, states: { ...(base.states || {}) } },
+	};
+}
+
 // ---------------------------------------------------------------- inspector
 // CSS de una capa tal como está en los .module.css, agrupado por origen:
 //   base       → la regla de la clase (en un set, la de la variante por defecto)
@@ -744,7 +779,7 @@ function boot(doc, data) {
 			},
 				h("span", { class: "fv-toggle", text: has ? (isOpen(layer) ? "▾" : "▸") : "", onclick: (e) => { e.stopPropagation(); toggle(layer); } }),
 				h("span", { class: `fv-kind fv-kind-${layer.kind}`, text: lab.icon }),
-				h("span", { class: "fv-name", text: lab.main }),
+				renamedName(layer, lab),
 				lab.sub && h("span", { class: "fv-sub", text: lab.sub }),
 				lab.tags.map((t) => h("span", { class: "fv-tag", text: t })),
 			);
@@ -752,6 +787,16 @@ function boot(doc, data) {
 			return row;
 		}));
 		treeBox.setAttribute("aria-activedescendant", selected ? `fv-layer-${selected.id}` : "");
+	}
+	// Nombre de la capa en el árbol; si se renombró, con Código se ve el nombre nuevo y una marca
+	function renamedName(layer, lab) {
+		const t = renameTarget(layer);
+		const p = pendingFor(t);
+		if (p === undefined) return h("span", { class: "fv-name", text: lab.main });
+		// Al quitar una decisión, el nombre lo vuelve a elegir el extractor (el de Figma o, si es
+		// vago, su sugerencia): no se puede anticipar
+		const to = p === null ? null : t.kind === "root" ? codeComponent(p) : `.${codeClass(p)}`;
+		return h("span", { class: "fv-name fv-renamed", title: `Se renombra: ${t.kind === "root" ? t.current : `.${t.current}`} → ${to || "el nombre que elija el extractor"}` }, code && to ? to : lab.main, " ✎");
 	}
 	function toggle(layer, open = !isOpen(layer)) {
 		openState.set(layer.key, open);
@@ -798,6 +843,97 @@ function boot(doc, data) {
 	canvas.addEventListener("mousemove", (e) => hover(layerAt(e)));
 	canvas.addEventListener("mouseleave", () => hover(null));
 	canvas.addEventListener("click", (e) => select(layerAt(e)));
+
+	// ---------------------------------------------------------------- renombrar
+	// Los nombres nuevos se juntan en pending y se descargan como archivo de decisiones para el
+	// extractor (--decisions). Se guardan en el navegador para no perderlos al recargar.
+	const DEC_KEY = `figspec.viewer.decisions.${(meta.source && meta.source.node) || rootName}`;
+	let pending = { byId: {} };
+	try {
+		const saved = JSON.parse(stored(DEC_KEY) || "null");
+		if (saved && saved.byId) pending = saved;
+	} catch {
+		// guardado ilegible: se empieza de cero
+	}
+	const applied = (meta.decisions && meta.decisions.names) || {};
+	const savePending = () => store(DEC_KEY, JSON.stringify(pending));
+	const pendingCount = () => Object.keys(pending.byId).length + ("root" in pending ? 1 : 0);
+	// Qué se renombra al elegir una capa: el componente (la raíz) o la clase de la capa, por su id
+	function renameTarget(layer) {
+		if (!layer) return null;
+		if (!layer.parent && view.comp === rootName) return { kind: "root", current: design.component.name, figma: design.component.figmaName };
+		const n = layer.node;
+		const el = n.instance ? n.instance.el : n.el;
+		if (!el.id || el.className === "root") return null;
+		return { kind: "layer", id: el.id, current: el.className, figma: el.name };
+	}
+	function pendingFor(t) {
+		if (!t) return undefined;
+		return t.kind === "root" ? ("root" in pending ? pending.root : undefined) : pending.byId[t.id];
+	}
+	function setPending(t, value) {
+		const v = value.trim();
+		const was = t.kind === "root" ? applied.root : (applied.byId || {})[t.id];
+		const same = !v || v === t.current || (t.kind === "layer" && codeClass(v) === t.current && !was);
+		if (t.kind === "root") {
+			if (same) delete pending.root;
+			else pending.root = v;
+		} else if (same) delete pending.byId[t.id];
+		else pending.byId[t.id] = v;
+		savePending();
+		drawTree();
+		showDecisions();
+	}
+	function forget(t) {
+		// Vuelve al nombre de Figma: si había una decisión aplicada, se quita (null)
+		const was = t.kind === "root" ? applied.root : (applied.byId || {})[t.id];
+		if (t.kind === "root") {
+			if (was) pending.root = null;
+			else delete pending.root;
+		} else if (was) pending.byId[t.id] = null;
+		else delete pending.byId[t.id];
+		savePending();
+		drawTree();
+		showDecisions();
+		showSelection();
+	}
+	const decisionsBox = h("div", { class: "fv-decisions", role: "region", "aria-label": "Nombres cambiados" });
+	// Mismo nombre base que el paquete del plugin (figspec-menu-mobile.json → .decisions.json)
+	const bundleFile = (meta.source && meta.source.bundle) || `figspec-${spec.kebab(design.component.figmaName) || "componente"}.json`;
+	const fileName = bundleFile.replace(/\.json$/i, "") + ".decisions.json";
+	function download() {
+		const blob = new Blob([JSON.stringify(decisionsDoc(meta, pending), null, 2) + "\n"], { type: "application/json" });
+		const a = doc.createElement("a");
+		a.href = URL.createObjectURL(blob);
+		a.download = fileName;
+		doc.body.append(a);
+		a.click();
+		a.remove();
+		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+	}
+	function showDecisions() {
+		const n = pendingCount();
+		decisionsBox.hidden = !n;
+		if (!n) return decisionsBox.replaceChildren();
+		const rows = [];
+		if ("root" in pending) rows.push({ from: design.component.name, to: pending.root === null ? "(el que elija el extractor)" : codeComponent(pending.root), layer: () => (view.comp === rootName ? layers[0] : null) });
+		for (const [id, v] of Object.entries(pending.byId)) {
+			const find = () => layers.find((l) => { const t = renameTarget(l); return t && t.id === id; });
+			const l = find();
+			const t = l && renameTarget(l);
+			rows.push({ from: t ? `.${t.current}` : id, to: v === null ? "(el que elija el extractor)" : `.${codeClass(v)}`, layer: find });
+		}
+		const cmd = `node extractor.js ${bundleFile} --decisions ${fileName}`;
+		const copyBtn = h("button", { type: "button", class: "fv-link", text: "Copiar comando", onclick: () => copy(cmd, copyBtn) });
+		decisionsBox.replaceChildren(
+			h("h3", { text: `${n} nombre${n === 1 ? "" : "s"} cambiado${n === 1 ? "" : "s"}` }),
+			h("ul", {}, rows.map((r) => h("li", {}, h("button", { type: "button", class: "fv-link", text: r.from, onclick: () => { const l = r.layer(); if (l) select(l); } }), " → ", h("code", { text: r.to })))),
+			h("div", { class: "fv-insp-tools" },
+				h("button", { type: "button", text: "Descargar decisiones", onclick: download }),
+				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); } })),
+			h("p", { class: "fv-hint" }, "Vuelve a generar la salida con el archivo: ", h("code", { text: cmd }), " ", copyBtn),
+		);
+	}
 
 	// ---------------------------------------------------------------- inspector
 	// Panel derecho: la capa elegida. Para todos: ruta, caja medida, texto o instancia; con Código,
@@ -878,6 +1014,27 @@ function boot(doc, data) {
 				props.length > 0 && pairs(props.map((k) => [k, typeof n.values[k] === "string" && n.values[k].endsWith(".svg") ? n.values[k].split("/").pop() : String(n.values[k])])),
 			));
 		}
+		const target = code && renameTarget(selected);
+		if (target) {
+			const p = pendingFor(target);
+			const shown = p === undefined || p === null ? target.current : p;
+			const result = h("p", { class: "fv-hint" });
+			const showResult = (v) => {
+				const t = v.trim();
+				result.textContent = !t || t === target.current ? "" : target.kind === "root" ? `Componente: ${codeComponent(t)}` : `Clase: .${codeClass(t)} (si ya existe, el extractor le agrega un número)`;
+			};
+			const input = h("input", { type: "text", value: shown, "aria-label": target.kind === "root" ? "Nombre del componente" : "Nombre en código",
+				oninput: (e) => { showResult(e.target.value); setPending(target, e.target.value); } });
+			showResult(shown);
+			const was = target.kind === "root" ? applied.root : (applied.byId || {})[target.id];
+			parts.push(section(target.kind === "root" ? "Nombre del componente" : "Nombre en código",
+				h("div", { class: "fv-rename" }, input,
+					(p !== undefined || was) && h("button", { type: "button", text: "Quitar", title: was ? "Quita la decisión: el extractor vuelve a elegir el nombre (el de Figma o su sugerencia)" : "Descarta este cambio", onclick: () => forget(target) })),
+				result,
+				was && p === undefined && h("p", { class: "fv-hint", text: "Este nombre ya viene de un archivo de decisiones." }),
+			));
+		} else if (code && !selected.node.el.id && !selected.node.instance)
+			parts.push(section("Nombre en código", h("p", { class: "fv-hint", text: "Vuelve a generar la salida para poder renombrar (faltan los id de Figma)." })));
 		if (code) {
 			const groups = cssGroups(data, n);
 			const copyBtn = h("button", { type: "button", text: "Copiar CSS", onclick: () => copy(cssText(groups), copyBtn) });
@@ -1045,6 +1202,7 @@ function boot(doc, data) {
 			),
 			h("div", { class: "fv-center" }, toolbar, propsBar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
+				decisionsBox,
 				h("h2", { text: "Inspector" }),
 				selectionBox,
 				h("h2", { text: "Detalles" }),
@@ -1096,6 +1254,7 @@ function boot(doc, data) {
 		e.preventDefault();
 	});
 	preferred = initialMode(stored(MODE_KEY), !!data.preview);
+	showDecisions();
 	buildFields();
 	renderNow({ refit: true });
 	// Tamaño de cada subcomponente en contexto (su primera instancia en la raíz), para dibujarlo suelto
@@ -1110,4 +1269,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

@@ -23,6 +23,8 @@
  *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
  *   --react           Genera además componentes React (TypeScript), ver react.js.  FIGMA_REACT=true
  *   --viewer          Genera además viewer.html (visualizador), ver viewer.js.     FIGMA_VIEWER=true
+ *   --decisions <archivo>  Nombres decididos en el visualizador (figspec-*.decisions.json).
+ *                                                                               FIGMA_DECISIONS
  *   --extract-repeated  Extrae los ítems repetidos a un subcomponente con props y estados.
  *                                                                               FIGMA_EXTRACT_REPEATED=true
  *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
@@ -86,6 +88,7 @@ const opts = {
 	shallow: envFlag("FIGMA_SHALLOW", false),
 	react: envFlag("FIGMA_REACT", false),
 	viewer: envFlag("FIGMA_VIEWER", false),
+	decisions: process.env.FIGMA_DECISIONS || null,
 	extractRepeated: envFlag("FIGMA_EXTRACT_REPEATED", false),
 };
 const argv = process.argv.slice(2);
@@ -108,6 +111,7 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--name") opts.name = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
+	else if (a === "--decisions") opts.decisions = argv[++i];
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
@@ -194,11 +198,13 @@ function main() {
 				.map(([id, v]) => [id, String(v).trim()])
 				.filter(([, v]) => v),
 		);
-		if (!opts.name && names.root) opts.name = names.root; // --name tiene prioridad
+		if (names.root) ctx.rootName = names.root;
 		console.error(
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
 	}
+	if (opts.decisions) applyDecisions(opts.decisions, nodeId);
+	if (!opts.name && ctx.rootName) opts.name = ctx.rootName; // --name tiene prioridad
 
 	const entry = data.nodes[nodeId];
 	if (!entry || !entry.document) fail(`No se encontró el nodo ${nodeId} en ${opts.from}.`);
@@ -236,10 +242,11 @@ function main() {
 	}
 
 	// Versión del formato de component.json: la exigen sus consumidores (p. ej. el visualizador)
-	const meta = { format: COMPONENT_FORMAT, source: { file: ctx.fileKey, node: nodeId } };
+	const meta = { format: COMPONENT_FORMAT, source: { file: ctx.fileKey, node: nodeId, bundle: path.basename(opts.from) } };
 	// Solo si se escribe preview.png (paquete del plugin con vista previa y sin --no-png)
 	const preview = opts.png && previewMeta(root);
 	if (preview) meta.preview = preview;
+	if (ctx.decisions) meta.decisions = ctx.decisions;
 	meta.notes = notes(subcomponents);
 	const result = { meta, component };
 	if (Object.keys(subcomponents).length) result.subcomponents = subcomponents;
@@ -313,6 +320,41 @@ function main() {
 	console.error(`✔ ${outDir}/`);
 	for (const f of files) console.error(`   ${f}`);
 	console.error(`  component.json ≈ ${Math.ceil(json.length / 4)} tokens`);
+}
+
+// ---------------------------------------------------------------- decisiones
+// Archivo de decisiones del visualizador (figspec-<nombre>.decisions.json): nombres elegidos
+// para capas, componente raíz y estados, con la misma forma que names del paquete del plugin.
+//   { "figspec": "decisions", "version": 1, "component": "<id del nodo exportado>",
+//     "names": { "root": "SideMenu", "byId": { "12:3": "navItem" }, "states": { "12:9": "active" } } }
+// Ganan sobre los nombres del paquete (y --name gana sobre todo). Se guardan en meta.decisions
+// para que el visualizador los conserve al exportar más cambios.
+const DECISIONS_VERSION = 1;
+
+function applyDecisions(file, nodeId) {
+	let d;
+	try {
+		d = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch (e) {
+		fail(`No se pudo leer ${file}: ${e.message}`);
+	}
+	if (!d || d.figspec !== "decisions")
+		fail(`${file} no es un archivo de decisiones de figspec (falta "figspec": "decisions").`);
+	if (d.version > DECISIONS_VERSION)
+		fail(`${file} es un archivo de decisiones versión ${d.version}, más nuevo que este extractor: actualízalo.`);
+	if (d.component && d.component !== nodeId) {
+		const msg = `Las decisiones de ${path.basename(file)} son de otro componente (${d.component}; este es ${nodeId}): se aplican solo los nombres de capas que existan.`;
+		console.error(`… ${msg}`);
+		ctx.notes.add(msg);
+	}
+	const names = d.names || {};
+	const clean = (o) => Object.entries(o || {}).map(([id, v]) => [id, String(v).trim()]).filter(([, v]) => v);
+	for (const [id, v] of clean(names.byId)) ctx.namesById.set(id, v);
+	for (const [id, v] of clean(names.states)) ctx.statesById.set(id, v);
+	if (names.root && String(names.root).trim()) ctx.rootName = String(names.root).trim();
+	const count = clean(names.byId).length + clean(names.states).length + (names.root ? 1 : 0);
+	console.error(`↺ Decisiones: ${count} nombre(s) de ${path.basename(file)}.`);
+	ctx.decisions = { names: { ...(names.root ? { root: String(names.root).trim() } : {}), byId: Object.fromEntries(clean(names.byId)), states: Object.fromEntries(clean(names.states)) } };
 }
 
 // ---------------------------------------------------------------- manifiesto de salida
@@ -570,7 +612,7 @@ function assemble(name, props, variants, defaults, isSub, code) {
 
 	const sig = (s) =>
 		JSON.stringify(s, (k, v) =>
-			k === "text" || k === "props" || k === "name" || k === "segments"
+			k === "text" || k === "props" || k === "name" || k === "segments" || k === "id"
 				? undefined
 				: v,
 		);
@@ -732,7 +774,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 			"El componente usa máscaras de Figma; revisa esas capas (se aproximan con overflow/border-radius).",
 		);
 
-	const el = { name: node.name };
+	const el = { name: node.name, id: node.id };
 	ctx.elSignature.set(el, signature(node));
 	ctx.elId.set(el, node.id);
 	const iconLike = !isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node));
@@ -1775,7 +1817,7 @@ function notes(subs) {
 	].filter((id) => !ctx.namesUsed.has(id));
 	if (unused.length)
 		n.push(
-			`${unused.length} nombre(s) elegidos en el plugin no corresponden a ninguna capa exportada (¿cambió el diseño?): ${unused.slice(0, 5).map((id) => `${id} → ${ctx.namesById.get(id) || ctx.statesById.get(id)}`).join(", ")}.`,
+			`${unused.length} nombre(s) elegidos (en el plugin o en las decisiones) no corresponden a ninguna capa exportada (¿cambió el diseño?): ${unused.slice(0, 5).map((id) => `${id} → ${ctx.namesById.get(id) || ctx.statesById.get(id)}`).join(", ")}.`,
 		);
 	if (ctx.unnamedVars)
 		n.push(
@@ -2471,7 +2513,7 @@ function repeatedSub(comp, parent, items, rep) {
 		const tpl = at(tplItem, p);
 		if (els.some((e) => (e.children || []).length !== (tpl.children || []).length)) ok = false;
 		const sameName = els.every((e) => e.name === tpl.name) && !isGeneric(tpl.name);
-		const el = { name: tpl.name };
+		const el = { name: tpl.name, id: tpl.id };
 		if (tpl.tag) el.tag = tpl.tag;
 		let cls;
 		if (isRoot) cls = "root";
@@ -2623,7 +2665,7 @@ function repeatedSub(comp, parent, items, rep) {
 	};
 	parent.children = parent.children.map((k) => {
 		if (!items.includes(k)) return k;
-		const inst = { name: k.name, className: shared ? placeCls : k.className, component: sub.name };
+		const inst = { name: k.name, id: k.id, className: shared ? placeCls : k.className, component: sub.name };
 		const p = propsFor(k, defCombo);
 		if (Object.keys(p).length) inst.props = p;
 		instances.add(inst.className);
@@ -2818,9 +2860,10 @@ El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
 También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
 
 Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_VIEWER, FIGMA_EXTRACT_REPEATED (true/false).
+  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_VIEWER, FIGMA_EXTRACT_REPEATED (true/false), FIGMA_DECISIONS.
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
 --viewer genera además viewer.html: el componente junto a la vista previa de Figma (un solo archivo).
+--decisions <archivo> aplica los nombres decididos en el visualizador (figspec-<nombre>.decisions.json).
 --extract-repeated convierte los grupos repetidos (3+ hermanos iguales) en un subcomponente con props y estados.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
 Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);

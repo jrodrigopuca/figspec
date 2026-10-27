@@ -454,3 +454,39 @@ test("capas: la clave se conserva entre variantes (selección y desplegado)", ()
 	const twins = client.treeModel({ tag: "div", attrs: {}, comp: "C", el: { className: "root" }, children: [1, 2].map(() => ({ tag: "div", attrs: {}, comp: "C", el: { className: "item" }, children: [] })) });
 	assert.deepEqual(twins.map((l) => l.key), ["C", "C/item", "C/item#1"]);
 });
+
+// ---------------------------------------------------------------- renombrar y archivo de decisiones
+test("renombrar: la clase y el componente que dará el extractor", () => {
+	assert.equal(client.codeClass("Ítem de menú"), "itemDeMenu");
+	assert.equal(client.codeClass("Registro"), "registro");
+	assert.equal(client.codeClass("2 columnas"), "el2Columnas");
+	assert.equal(client.codeClass("root"), "rootEl");
+	assert.equal(client.codeClass("$$$"), "el");
+	assert.equal(client.codeComponent("menú lateral"), "MenuLateral");
+	assert.equal(client.codeComponent("---"), "Componente");
+});
+
+test("archivo de decisiones: lo aplicado antes más los cambios nuevos; null quita", () => {
+	const meta = { source: { node: "33:566" }, decisions: { names: { root: "Menú", byId: { "1:1": "uno", "2:2": "dos" }, states: { "9:9": "off" } } } };
+	assert.deepEqual(client.decisionsDoc(meta, { byId: { "2:2": null, "3:3": "tres" } }), {
+		figspec: "decisions", version: 1, component: "33:566",
+		names: { root: "Menú", byId: { "1:1": "uno", "3:3": "tres" }, states: { "9:9": "off" } },
+	});
+	assert.deepEqual(client.decisionsDoc(meta, { root: null, byId: {} }).names.root, undefined);
+	assert.deepEqual(client.decisionsDoc({ source: { node: "1:0" } }, { root: "Nuevo", byId: {} }).names, { root: "Nuevo", byId: {}, states: {} });
+});
+
+test("archivo de decisiones: el extractor lo acepta tal como lo arma el visualizador", () => {
+	const set = cardSet();
+	const id = set.nodes[set.nodeId].document.children[0].children[1].id; // "Label" en la variante por defecto
+	const doc = client.decisionsDoc({ source: { node: set.nodeId } }, { root: "Tarjeta", byId: { [id]: "Leyenda" } });
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-dec-"));
+	fs.writeFileSync(path.join(dir, "d.json"), JSON.stringify(doc));
+	const { out, status, stderr } = extract(["--viewer", "--decisions", path.join(dir, "d.json")], set);
+	assert.equal(status, 0, stderr);
+	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
+	assert.equal(spec.component.name, "Tarjeta");
+	assert.ok(spec.component.structure.children.some((e) => e.id === id && e.className === "leyenda"));
+	assert.deepEqual(spec.meta.decisions.names.byId, { [id]: "Leyenda" });
+	assert.equal(spec.meta.source.bundle, "in.json");
+});
