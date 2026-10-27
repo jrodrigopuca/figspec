@@ -25,7 +25,7 @@
  *   --viewer          Genera además viewer.html (visualizador), ver viewer.js.     FIGMA_VIEWER=true
  *   --decisions <archivo>  Nombres decididos en el visualizador. Sin la opción, se usa
  *                     <paquete>.decisions.json si está junto al paquete.      FIGMA_DECISIONS
- *   --no-decisions    No aplica decisiones (ni las que estén junto al paquete).
+ *   --no-decisions    No aplica nombres de archivos (ni decisiones ni los del plugin).
  *   --open            Genera el visualizador y lo abre en el navegador.
  *   --extract-repeated  Extrae los ítems repetidos a un subcomponente con props y estados.
  *                                                                               FIGMA_EXTRACT_REPEATED=true
@@ -167,10 +167,18 @@ function main() {
 		opts.from = newest;
 	}
 	if (opts.decisions && opts.decisionsFromEnv) opts.decisions = newestCopy(opts.decisions);
-	// Sin --decisions: el archivo que descarga el visualizador, junto al paquete y con su nombre
-	if (!opts.decisions && opts.findDecisions) {
-		const found = newestCopy(withoutCopyMark(opts.from).replace(/\.json$/i, "") + ".decisions.json");
-		if (fs.existsSync(found)) {
+	// Junto al paquete y con su nombre: los nombres del plugin (.names.json) y, sin --decisions,
+	// las decisiones que descarga el visualizador (.decisions.json)
+	opts.nameFiles = [];
+	if (opts.findDecisions) {
+		const base = withoutCopyMark(opts.from).replace(/\.json$/i, "");
+		const names = newestCopy(`${base}.names.json`);
+		if (fs.existsSync(names)) {
+			opts.nameFiles.push(names);
+			console.error(`↺ Nombres del plugin junto al paquete: ${names}`);
+		}
+		const found = newestCopy(`${base}.decisions.json`);
+		if (!opts.decisions && fs.existsSync(found)) {
 			opts.decisions = found;
 			console.error(`↺ Decisiones junto al paquete: ${found} (--no-decisions para no usarlas)`);
 		}
@@ -210,6 +218,7 @@ function main() {
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
 	}
+	for (const f of opts.nameFiles || []) applyDecisions(f, nodeId);
 	if (opts.decisions) applyDecisions(opts.decisions, nodeId);
 	if (!opts.name && ctx.rootName) opts.name = ctx.rootName; // --name tiene prioridad
 
@@ -334,13 +343,16 @@ function main() {
 }
 
 // ---------------------------------------------------------------- decisiones
-// Archivo de decisiones del visualizador (figspec-<nombre>.decisions.json): nombres elegidos
-// para capas, componente raíz y estados, con la misma forma que names del paquete del plugin.
-//   { "figspec": "decisions", "version": 1, "component": "<id del nodo exportado>",
-//     "names": { "root": "SideMenu", "byId": { "12:3": "navItem" }, "states": { "12:9": "active" } } }
-// Ganan sobre los nombres del paquete (y --name gana sobre todo). Se guardan en meta.decisions
-// para que el visualizador los conserve al exportar más cambios.
-const DECISIONS_VERSION = 1;
+// Nombres que no vienen de Figma: los que se eligen en la ventana del plugin (se exportan aparte,
+// <paquete>.names.json) y los que se deciden en el visualizador (<paquete>.decisions.json). Mismo
+// formato, "figspec": "decisions":
+//   v1: { "version": 1, "component": "<id>", "names": { "root", "byId": { id: nombre }, "states" } }
+//   v2: { "version": 2, "component": { "id", "figma" }, "root": { "name", "at" },
+//         "layers": [{ "id", "figma", "path", "name", "at" }], "states": [ ...igual ], "groups": [] }
+// Se aplican en orden (los nombres del plugin, luego las decisiones: la última gana) sobre los
+// del paquete (paquetes viejos que traían "names"); --name gana sobre todo. Lo aplicado queda en
+// meta.decisions, así el visualizador lo conserva al guardar más cambios.
+const DECISIONS_VERSION = 2;
 
 function applyDecisions(file, nodeId) {
 	let d;
@@ -353,19 +365,29 @@ function applyDecisions(file, nodeId) {
 		fail(`${file} no es un archivo de decisiones de figspec (falta "figspec": "decisions").`);
 	if (d.version > DECISIONS_VERSION)
 		fail(`${file} es un archivo de decisiones versión ${d.version}, más nuevo que este extractor: actualízalo.`);
-	if (d.component && d.component !== nodeId) {
-		const msg = `Las decisiones de ${path.basename(file)} son de otro componente (${d.component}; este es ${nodeId}): se aplican solo los nombres de capas que existan.`;
+	const componentId = d.component && typeof d.component === "object" ? d.component.id : d.component;
+	if (componentId && componentId !== nodeId) {
+		const msg = `Los nombres de ${path.basename(file)} son de otro componente (${componentId}; este es ${nodeId}): se aplican solo los de capas que existan.`;
 		console.error(`… ${msg}`);
 		ctx.notes.add(msg);
 	}
+	// v1 → { id: nombre }; v2 → lista de entradas
+	const v2 = d.version >= 2;
 	const names = d.names || {};
-	const clean = (o) => Object.entries(o || {}).map(([id, v]) => [id, String(v).trim()]).filter(([, v]) => v);
-	for (const [id, v] of clean(names.byId)) ctx.namesById.set(id, v);
-	for (const [id, v] of clean(names.states)) ctx.statesById.set(id, v);
-	if (names.root && String(names.root).trim()) ctx.rootName = String(names.root).trim();
-	const count = clean(names.byId).length + clean(names.states).length + (names.root ? 1 : 0);
-	console.error(`↺ Decisiones: ${count} nombre(s) de ${path.basename(file)}.`);
-	ctx.decisions = { names: { ...(names.root ? { root: String(names.root).trim() } : {}), byId: Object.fromEntries(clean(names.byId)), states: Object.fromEntries(clean(names.states)) } };
+	const pairs = (v1map, list) =>
+		(v2 ? (list || []).map((e) => [e && e.id, e && e.name]) : Object.entries(v1map || {}))
+			.map(([id, v]) => [id, String(v == null ? "" : v).trim()])
+			.filter(([id, v]) => id && v);
+	const layers = pairs(names.byId, d.layers);
+	const states = pairs(names.states, d.states);
+	const rootRaw = v2 ? d.root && (typeof d.root === "object" ? d.root.name : d.root) : names.root;
+	const root = rootRaw && String(rootRaw).trim();
+	const acc = (ctx.decisions = ctx.decisions || { names: { byId: {}, states: {} } });
+	for (const [id, v] of layers) ctx.namesById.set(id, v), (acc.names.byId[id] = v);
+	for (const [id, v] of states) ctx.statesById.set(id, v), (acc.names.states[id] = v);
+	if (root) (ctx.rootName = root), (acc.names.root = root);
+	const count = layers.length + states.length + (root ? 1 : 0);
+	console.error(`↺ Nombres: ${count} de ${path.basename(file)}.`);
 }
 
 // ---------------------------------------------------------------- manifiesto de salida
@@ -2908,7 +2930,8 @@ Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_O
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
 --viewer genera además viewer.html: el componente junto a la vista previa de Figma (un solo archivo).
 --decisions <archivo> aplica los nombres decididos en el visualizador; sin la opción, se usa
-  figspec-<nombre>.decisions.json si está junto al paquete (--no-decisions para no usarlo).
+  figspec-<nombre>.decisions.json si está junto al paquete. Los nombres elegidos en el plugin
+  (figspec-<nombre>.names.json, junto al paquete) se aplican antes. --no-decisions no usa ninguno.
 --open genera el visualizador y lo abre en el navegador.
 Las rutas aceptan ~ (carpeta personal). Si FIGMA_FROM viene del .env y el navegador guardó copias
   ("figspec-x (1).json"), se usa la más reciente.

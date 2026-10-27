@@ -1,14 +1,13 @@
 // figspec export — exporta un componente en el formato de la API REST de Figma (JSON_REST_V1)
-// junto con íconos (SVG), imágenes, vista previa, nombres de variables y los nombres que el
-// usuario elige para las capas con nombre vago ("Frame 5"), en un solo archivo que el extractor
-// lee con `node extractor.js <archivo>`.
+// junto con íconos (SVG), imágenes, vista previa y nombres de variables: la foto de Figma, que el
+// extractor lee con `node extractor.js <archivo>`. Los nombres que el usuario elige para las capas
+// con nombre vago ("Frame 5") van en otro archivo (formato de decisiones), solo si hay alguno.
 // Corre dentro de Figma: no usa la API REST ni consume su cuota.
+// Solo lectura: no escribe nada en el archivo de Figma (ni datos del plugin), así no aparece en el
+// historial de versiones ni genera ruido a quienes diseñan. Ubicar una capa solo mueve la vista.
 
 // Misma regla que extractor.js para decidir qué se exporta como ícono
 const VECTOR_TYPES = ["VECTOR", "BOOLEAN_OPERATION", "STAR", "REGULAR_POLYGON"];
-// Nombres elegidos en la ventana, guardados en el archivo (datos del plugin, invisibles)
-const NAME_KEY = "figspec.name";
-const STATE_KEY = "figspec.state"; // nombre de estado de un ítem repetido
 
 let rootId = null; // raíz fijada: hacer clic en una fila o ubicar una capa no la cambia
 
@@ -46,8 +45,8 @@ figma.ui.onmessage = async (msg) => {
 			const n = await figma.getNodeByIdAsync(msg.id);
 			if (n) figma.viewport.scrollAndZoomIntoView([n]);
 		} else if (msg.type === "export") {
-			const bundle = await exportRoot(msg.options || {}, msg.names || {});
-			figma.ui.postMessage({ type: "bundle", bundle });
+			const { bundle, names } = await exportRoot(msg.options || {}, msg.names || {});
+			figma.ui.postMessage({ type: "bundle", bundle, names });
 		}
 	} catch (e) {
 		fail(e);
@@ -63,56 +62,22 @@ function progress(text) {
 }
 
 // ---------------------------------------------------------------- análisis de la raíz
-// Lista las capas con nombre vago, con la sugerencia del extractor y el nombre guardado antes.
+// Lista las capas con nombre vago, con la sugerencia del extractor. Los campos empiezan vacíos:
+// los nombres ya decididos viven en el archivo de decisiones del proyecto, no en Figma.
 async function analyze(node) {
 	rootId = node.id;
 	figma.ui.postMessage({ type: "progress", text: "Analizando…" });
 	const entry = await node.exportAsync({ format: "JSON_REST_V1" });
 	const rows = vagueRows(entry);
-	for (const row of rows) {
-		const n = await figma.getNodeByIdAsync(row.id);
-		row.value = (n && readName(n)) || "";
-	}
+	for (const row of rows) row.value = "";
 	const repeats = repeatGroups(entry);
-	for (const rep of repeats)
-		for (const g of rep.groups) {
-			g.value = "";
-			for (const id of g.ids) {
-				const n = await figma.getNodeByIdAsync(id);
-				const v = n && readName(n, STATE_KEY);
-				if (v) {
-					g.value = v;
-					break;
-				}
-			}
-		}
+	for (const rep of repeats) for (const g of rep.groups) g.value = "";
 	figma.ui.postMessage({
 		type: "analysis",
-		root: {
-			id: node.id,
-			name: node.name,
-			generic: isGeneric(node.name),
-			value: readName(node) || "",
-		},
+		root: { id: node.id, name: node.name, generic: isGeneric(node.name), value: "" },
 		rows,
 		repeats,
 	});
-}
-
-function readName(n, key = NAME_KEY) {
-	try {
-		return n.getPluginData(key);
-	} catch (e) {
-		return "";
-	}
-}
-
-function writeName(n, value, key = NAME_KEY) {
-	try {
-		n.setPluginData(key, value || "");
-	} catch (e) {
-		/* capas donde no se puede guardar (p. ej. dentro de algunas instancias): no se recuerda */
-	}
 }
 
 // Recorre como el extractor: no entra en íconos, ni en capas ocultas que se descartan, y de cada
@@ -269,33 +234,18 @@ async function exportRoot(options, names) {
 	const node = rootId && (await figma.getNodeByIdAsync(rootId));
 	if (!node) throw new Error("Selecciona un frame, componente o instancia para exportar.");
 
-	// Los nombres elegidos se guardan en el archivo para la próxima exportación
-	writeName(node, names.root);
-	for (const [id, value] of Object.entries(names.byId || {})) {
-		const n = await figma.getNodeByIdAsync(id);
-		if (n) writeName(n, value);
-	}
-	for (const [id, value] of Object.entries(names.states || {})) {
-		const n = await figma.getNodeByIdAsync(id);
-		if (n) writeName(n, value, STATE_KEY);
-	}
-
 	progress("Exportando estructura…");
 	// Mismo formato que una entrada de GET /v1/files/:key/nodes
 	const entry = await node.exportAsync({ format: "JSON_REST_V1" });
 	await addRotationGeometry(entry.document);
-	const byId = {};
-	for (const [id, value] of Object.entries(names.byId || {})) if (value) byId[id] = value;
-	const states = {};
-	for (const [id, value] of Object.entries(names.states || {})) if (value) states[id] = value;
+	const exportedAt = new Date().toISOString();
 	const bundle = {
 		figspec: 2,
 		name: node.name,
 		nodeId: node.id,
 		fileKey: figma.fileKey || null, // solo disponible en plugins privados
-		exportedAt: new Date().toISOString(),
+		exportedAt,
 		nodes: { [node.id]: entry },
-		names: { root: names.root || null, byId, states },
 		variables: await variables(entry.document),
 		icons: {},
 		images: {},
@@ -328,7 +278,49 @@ async function exportRoot(options, names) {
 			constraint: { type: "SCALE", value: 1 },
 		});
 	}
-	return bundle;
+	return { bundle, names: namesFile(node, entry, names, exportedAt) };
+}
+
+// ---------------------------------------------------------------- archivo de nombres
+// Los nombres elegidos en la ventana, en el formato de decisiones (versión 2), para que el
+// extractor los combine con las decisiones del proyecto. null si no se eligió ninguno.
+// Cada capa: id, nombre en Figma, ruta y fecha. La ruta permite reconocerla si el id cambia (una
+// copia del componente): pares [nombre, n] desde la raíz (en un set, desde la variante por
+// defecto), con n = posición entre hermanos del mismo nombre, contando las ocultas (como las
+// clases del extractor). Entra en las instancias.
+function namesFile(node, entry, names, at) {
+	let doc = entry.document;
+	if (doc.type === "COMPONENT_SET") doc = defaultVariant(doc);
+	const info = new Map(); // id → { figma, path }
+	(function visit(n, path) {
+		info.set(n.id, { figma: n.name, path });
+		const seen = new Map();
+		for (const c of n.children || []) {
+			const k = seen.get(c.name) || 0;
+			seen.set(c.name, k + 1);
+			visit(c, [...path, [c.name, k]]);
+		}
+	})(doc, []);
+	const entries = (byId) =>
+		Object.entries(byId || {})
+			.map(([id, v]) => [id, String(v || "").trim()])
+			.filter(([id, v]) => v && info.has(id))
+			.map(([id, v]) => ({ id, figma: info.get(id).figma, path: info.get(id).path, name: v, at }));
+	const layers = entries(names.byId);
+	const states = entries(names.states);
+	const root = String(names.root || "").trim();
+	if (!root && !layers.length && !states.length) return null;
+	return {
+		figspec: "decisions",
+		version: 2,
+		origin: "plugin",
+		savedAt: at,
+		component: { id: node.id, figma: node.name },
+		...(root ? { root: { name: root, at } } : {}),
+		layers,
+		states,
+		groups: [],
+	};
 }
 
 // JSON_REST_V1 no trae size ni relativeTransform (la API REST sí, con geometry=paths): se toman

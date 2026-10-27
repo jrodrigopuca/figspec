@@ -25,7 +25,9 @@ Selecciona el componente y ejecuta **figspec export**. La ventana queda fijada e
 - **Estados**: si hay ítems repetidos con estilos distintos (p. ej. un ítem activo y otros deshabilitados), un campo por grupo con el nombre que le dará el extractor (`active`, `disabled2`…); escribe otro si quieres. Se usan con `--extract-repeated`.
 - Si seleccionas otra capa, la ventana ofrece **Usar esta selección**.
 
-Pulsa **Exportar**: se descarga `figspec-<nombre>.json` con el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa, los nombres de las variables y los nombres elegidos. Los nombres elegidos se guardan en el archivo de Figma, así la próxima vez ya están. Si la descarga no funciona, usa **Copiar JSON** y pégalo en un archivo.
+Pulsa **Exportar**: se descarga `figspec-<nombre>.json`, la foto de Figma: el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa y los nombres de las variables. Si elegiste nombres, se descargan aparte en `figspec-<nombre>.names.json`; déjalo junto al paquete y el extractor lo aplica solo. Si la descarga no funciona, usa **Copiar JSON** / **Copiar nombres** y pégalos en archivos con esos nombres.
+
+El plugin es de **solo lectura**: no escribe nada en el archivo de Figma (ni datos invisibles), así no aparece en el historial de versiones ni genera ruido a quienes diseñan. Por eso la ventana no recuerda los nombres de una exportación a otra: viven en esos archivos (y, ya pulidos, en el archivo de decisiones; ver [Renombrar](#renombrar)).
 
 ## 3. Generar la salida
 
@@ -212,7 +214,7 @@ Con **Código** prendido, el inspector tiene un campo **Nombre en código** para
 
 El archivo usa los id de Figma de cada capa, así que sigue valiendo si exportas de nuevo el mismo componente. Sus nombres ganan sobre los elegidos en el plugin (y `--name` gana sobre todo). Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos. **Quitar** descarta un cambio o, si ya estaba aplicado, lo saca del archivo para que el extractor vuelva a elegir el nombre.
 
-Por ahora los nombres viven en ese archivo, no en Figma: guárdalo junto al paquete.
+Los nombres viven en ese archivo, no en Figma (el plugin es de solo lectura): guárdalo junto al paquete. Más adelante vivirá en una carpeta del proyecto, versionada (ver BACKLOG.md).
 
 ### Avisos y diferencias esperables
 

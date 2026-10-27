@@ -47,7 +47,7 @@
 	button.primary { flex: 1; background: var(--figma-color-bg-brand, #0d99ff); border-color: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff); }
 	button.primary:hover:not(:disabled) { background: var(--figma-color-bg-brand-hover, #0b88e6); }
 	button:disabled { opacity: 0.5; cursor: default; }
-	#copy { display: none; }
+	#copy, #copyNames { display: none; }
 	#status { margin-top: 6px; white-space: pre-wrap; min-height: 16px; }
 	#status.error { color: var(--figma-color-text-danger, #c00); }
 </style>
@@ -76,6 +76,7 @@
 	<div class="actions">
 		<button class="btn primary" id="export" disabled>Exportar</button>
 		<button class="btn" id="copy">Copiar JSON</button>
+		<button class="btn" id="copyNames">Copiar nombres</button>
 	</div>
 	<div id="status" class="muted"></div>
 </div>
@@ -86,6 +87,7 @@
 	let rows = [];
 	let stateRows = []; // { ids, input } por grupo de estilo de cada estructura repetida
 	let lastJson = null;
+	let lastNames = null; // archivo de nombres (solo si se eligió alguno)
 	let busy = false;
 
 	const send = (msg) => parent.postMessage({ pluginMessage: msg }, "*");
@@ -98,6 +100,7 @@
 		$("export").disabled = true;
 		$("export").textContent = "Exportando…";
 		$("copy").style.display = "none";
+		$("copyNames").style.display = "none";
 		document.querySelectorAll("#list input").forEach((i) => (i.disabled = true));
 		const byId = {};
 		for (const r of rows) byId[r.id] = $(`in-${r.id}`).value.trim();
@@ -112,15 +115,17 @@
 	};
 
 	// Si la descarga no funciona en tu versión de Figma, el JSON se puede copiar y pegar en un archivo
-	$("copy").onclick = () => {
+	const copyText = (text, file) => {
 		const t = document.createElement("textarea");
-		t.value = lastJson;
+		t.value = text;
 		document.body.appendChild(t);
 		t.select();
 		const ok = document.execCommand("copy");
 		t.remove();
-		status(ok ? "Copiado. Pégalo en un archivo .json." : "No se pudo copiar.", !ok);
+		status(ok ? `Copiado. Pégalo en ${file}.` : "No se pudo copiar.", !ok);
 	};
+	$("copy").onclick = () => copyText(lastJson, "un archivo .json");
+	$("copyNames").onclick = () => copyText(lastNames.text, lastNames.file);
 
 	// ⌘↵ / Ctrl+↵ exporta desde cualquier campo
 	document.addEventListener("keydown", (e) => {
@@ -139,7 +144,7 @@
 		else if (msg.type === "error") {
 			status(msg.message, true);
 			done();
-		} else if (msg.type === "bundle") save(msg.bundle);
+		} else if (msg.type === "bundle") save(msg.bundle, msg.names);
 	};
 
 	function renderEmpty(count) {
@@ -264,31 +269,43 @@
 		document.querySelectorAll("#list input").forEach((i) => (i.disabled = false));
 	}
 
-	function save(bundle) {
+	function save(bundle, names) {
 		// Los binarios (Uint8Array) viajan como base64 dentro del JSON
 		for (const k of Object.keys(bundle.images)) bundle.images[k] = base64(bundle.images[k]);
 		if (bundle.preview) bundle.preview = base64(bundle.preview);
 		lastJson = JSON.stringify(bundle);
-		const name = (bundle.names && bundle.names.root) || bundle.name;
-		const file = `figspec-${slug(name) || "export"}.json`;
-		const a = document.createElement("a");
-		a.href = URL.createObjectURL(new Blob([lastJson], { type: "application/json" }));
-		a.download = file;
-		a.click();
-		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+		// El nombre del archivo usa el del componente elegido, si hay (evita varios "figspec-frame-1")
+		const base = `figspec-${slug((names && names.root && names.root.name) || bundle.name) || "export"}`;
+		const file = `${base}.json`;
+		download(lastJson, file);
+		// Los nombres elegidos, aparte: el paquete es la foto de Figma
+		lastNames = names ? { text: JSON.stringify(names, null, 2) + "\n", file: `${base}.names.json` } : null;
+		if (lastNames) setTimeout(() => download(lastNames.text, lastNames.file), 400);
 		const icons = Object.keys(bundle.icons).length;
 		const images = Object.keys(bundle.images).length;
-		const named = Object.keys(bundle.names.byId).length;
-		const states = Object.keys(bundle.names.states || {}).length;
+		const named = names ? names.layers.length + (names.root ? 1 : 0) : 0;
+		const states = names ? names.states.length : 0;
 		status(
-			`Listo: ${file} (${Math.ceil(lastJson.length / 1024)} KB)\n` +
-				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}, ${named} nombre(s) elegidos.\n` +
+			`Listo: ${file} (${Math.ceil(lastJson.length / 1024)} KB)` +
+				(lastNames ? ` y ${lastNames.file}` : "") +
+				`\n${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}, ${named} nombre(s) y ${states} estado(s) elegidos.\n` +
+				"Figma no registró ningún cambio. Deja los archivos juntos: el extractor encuentra los nombres.\n" +
 				// Los estados solo se usan al extraer los repetidos
 				`node extractor.js ${file}${states ? " --extract-repeated" : ""}`,
 		);
 		$("copy").style.display = "inline-block";
+		$("copyNames").style.display = lastNames ? "inline-block" : "none";
 		done();
 	}
+
+	function download(text, file) {
+		const a = document.createElement("a");
+		a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+		a.download = file;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+	}
+
 
 	function base64(bytes) {
 		let s = "";

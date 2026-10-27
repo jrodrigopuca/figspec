@@ -90,6 +90,58 @@ carpeta aparte):
   de props según la variante, solo se reportan. En el padre con variantes no se usa `items.map`
   (cada ítem tiene su clase para `variantProps`).
 
+- [ ] **Flujo de trabajo sin escribir en Figma** (acordado con el usuario el 2026-10-27, con
+  ux-ui y architect). Objetivo: el plugin no deja ningún rastro en el archivo de Figma (ni
+  `setPluginData`: llena el historial de versiones y genera ruido a UX/UI) y los nombres viven en
+  archivos del proyecto.
+  _Flujo:_ (1) en Figma, seleccionar el componente y exportar; opcionalmente nombrar las capas
+  genéricas en la ventana; sin cambios en Figma · (2) el extractor genera la vista · (3)
+  opcional, pulir en el visualizador (nombres, estados, grupos repetidos) · (4) `npm run react`
+  lleva el componente al proyecto.
+  _Decidido:_
+  - `figspec-*.json` es la foto de Figma: nada lo modifica.
+  - El plugin es de solo lectura: no escribe ni lee `pluginData` (los nombres que quedaron
+    guardados en archivos de Figma se ignoran; borrarlos sería otra escritura).
+  - Los nombres elegidos en la ventana del plugin se exportan en otro archivo (solo si hay
+    alguno), con el formato de decisiones.
+  - Decisiones: un archivo por componente, versionado en el proyecto, relacionado por el id del
+    componente (el nombre del archivo es el del componente, para leerlo). Cada nombre se relaciona
+    con la capa que existe (id, nombre en Figma, ruta) y lleva su fecha; al combinar, en cada capa
+    gana el más reciente. Si el id no aparece (una copia), se busca por ruta; lo que no encuentra
+    capa se informa y se conserva.
+  - El `.env` indica carpetas: `FIGMA_FROM` (paquetes: archivo o carpeta), `FIGMA_DECISIONS`
+    (decisiones del proyecto), `FIGMA_OUT_DIR` (trabajo, una subcarpeta por componente),
+    `FIGMA_REACT_DIR` (destino de React). Los comandos aceptan el componente
+    (`npm start -- menu-mobile`); sin él, el último paquete. Un archivo en lugar de carpeta sigue
+    valiendo para un solo componente.
+  - El extractor y `npm run react` usan las decisiones. El extractor combina los archivos
+    entrantes (el del plugin, lo descargado por el visualizador) con el del proyecto, lo
+    actualiza y lo informa. `npm run react` comprueba que la salida esté al día con el paquete y
+    las decisiones antes de escribir en el proyecto.
+  - Con `npm start`, servidor local para que el visualizador guarde directo en `FIGMA_DECISIONS`;
+    el `viewer.html` suelto sigue descargando.
+  _Plan:_ ~~1 plugin de solo lectura + archivo de nombres aparte + pruebas que impidan escrituras~~
+  (hecho: sin `setPluginData` ni `getPluginData`; el paquete ya no lleva `names`; los nombres
+  elegidos se descargan en `<paquete>.names.json`, formato de decisiones v2 con `origin: "plugin"`,
+  id, nombre en Figma, ruta `[[nombre, n], …]` desde la raíz o la variante por defecto (n =
+  posición entre homónimos, contando las ocultas; entra en las instancias) y fecha; "Copiar
+  nombres" si falla la descarga; el extractor lee v2 por id, encuentra el archivo junto al
+  paquete y lo aplica antes de las decisiones; todo lo aplicado queda en `meta.decisions`; el
+  `figma` simulado de las pruebas falla ante cualquier escritura y una prueba revisa el código
+  (con un `setPluginData` agregado a propósito fallan 8 de 9). _Prueba pendiente en Figma real:_
+  que la segunda descarga (los nombres) no la bloquee Figma o el navegador.) ·
+  2 decisiones v2 (id, ruta, fecha; lectura de v1), carpetas en `.env`, combinación de entrantes ·
+  3 visualizador: modo Nombres (sin Código, con estados), "Guardar nombres", estado
+  aplicados/sin guardar, servidor local · 4 `npm run react` (destino, al día, aviso de cambios en
+  clases y props) · 5 grupos repetidos.
+  _Tema a revisar (usuario):_ agrupar los ítems de un grupo repetido. Opciones: una clase común
+  (`.item`) si los estilos son idénticos; `.item` más un modificador por estado
+  (`data-state`) si difieren; o el subcomponente (con `.map` en React). Decidir por grupo en el
+  visualizador, en lugar de `--extract-repeated` para todos.
+  _Riesgos:_ la definición de la ruta y el formato v2 quedan en los repositorios (fijarlos con
+  versión y pruebas); el React integrado es una API pública (renombrar después rompe a quien lo
+  usa: avisar diferencias).
+
 - [x] **Visualizador, primera entrega (fases 1 y 2)** (2026-10-26/27; diseño de ux-ui revisado por
   architect). `viewer.html` autocontenido (doble clic, sin red) para comparar el componente
   generado con la `preview.png` de Figma y entender qué se generó; lo usan dev y UX.
@@ -185,23 +237,8 @@ carpeta aparte):
     _Posible después:_ `npm run watch`, que vuelva a generar al aparecer un paquete o un archivo
     de decisiones nuevo (con recarga del visualizador).
   - _Visualizador como editor (idea del usuario, 2026-10-27), lo que sigue:_
-    1. _Futuro lejano (decidido por el usuario el 2026-10-27):_ llevar las decisiones a Figma
-       ("Importar decisiones" en el plugin, con `setPluginData`). Escribir en el archivo de Figma
-       afecta a otras personas cuando se trabaja en equipo y puede exceder el alcance de quien
-       exporta; sirve para trabajar solo. Por ahora los nombres viven en el archivo de decisiones,
-       junto al paquete.
-    1b. _Decidido (2026-10-27): se deja como está._ El plugin guarda en el archivo de Figma los
-       nombres elegidos en su ventana (`setPluginData` al exportar: `figspec.name` en la raíz y en
-       cada capa listada, también vacías, y `figspec.state` en los ítems repetidos). No cambia
-       nada visible ni nada con lo que trabaja UX/UI (capas, nombres, estilos, estructura); sí es
-       una edición del archivo (sincroniza, entra en el historial, suma un paso de deshacer a
-       quien exporta). Es lo único que escribe: ⌖ solo mueve la vista y la selección no cambia.
-       _Prueba pendiente en Figma real:_ si guardar esos datos marca un componente de biblioteca
-       como "cambios sin publicar" o cuenta como modificación en capas dentro de una instancia.
-       _Posibilidad a futuro:_ dejar de escribir y recordar los nombres en `figma.clientStorage`
-       (local y privado; no se comparte, se pierde al cambiar de equipo y la clave sería id + nombre
-       del nodo porque `fileKey` no está disponible) más "Cargar decisiones" en el plugin, que lee
-       el archivo de decisiones para llenar la ventana (se comparte y no edita Figma).
+    1. ~~Llevar las decisiones a Figma~~ y ~~1b: dejar `setPluginData`~~: reemplazado por el flujo
+       sin escrituras en Figma (ver "Flujo de trabajo sin escribir en Figma", arriba).
     2. Renombrar los estados de los ítems repetidos (`names.states`) y los subcomponentes desde
        el visualizador: el archivo ya admite `states`; falta la interfaz. Los nombres de los
        subcomponentes de Figma no se pueden cambiar todavía (ni en el plugin).
