@@ -222,3 +222,16 @@ test("viewer.js con FIGMA_OUT_DIR: el componente nombrado o la salida más recie
 	assert.equal(run("viewer.js", [], { FIGMA_OUT_DIR: base }).status, 0);
 	assert.ok(fs.existsSync(path.join(base, "login", "viewer.html")), "sin nombre, la más reciente (login)");
 });
+
+test("los nombres de la sección decisions del paquete pasan al archivo del proyecto", () => {
+	const dir = tmp();
+	const bundle = cardNamed("Card", "Benefits");
+	bundle.decisions = { ...names(bundle, "delPlugin", "2026-10-27T10:00:00.000Z"), savedAt: "2026-10-27T10:00:00.000Z" };
+	write(path.join(dir, "figspec-card.json"), bundle);
+	const project = path.join(dir, "decisions");
+	const r = run("extractor.js", [], { FIGMA_FROM: dir, FIGMA_OUT_DIR: path.join(dir, "out"), FIGMA_DECISIONS: project });
+	assert.equal(r.status, 0, r.stderr);
+	assert.match(r.stderr, /nombres elegidos en el plugin/);
+	assert.equal(spec(path.join(dir, "out", "card")).component.structure.children[0].className, "delPlugin");
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, "card.decisions.json"), "utf8")).layers.map((x) => [x.name, x.origin]), [["delPlugin", "plugin"]]);
+});

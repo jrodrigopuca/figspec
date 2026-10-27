@@ -144,8 +144,11 @@ carpeta aparte):
   nombres" si falla la descarga; el extractor lee v2 por id, encuentra el archivo junto al
   paquete y lo aplica antes de las decisiones; todo lo aplicado queda en `meta.decisions`; el
   `figma` simulado de las pruebas falla ante cualquier escritura y una prueba revisa el código
-  (con un `setPluginData` agregado a propósito fallan 8 de 9). _Prueba pendiente en Figma real:_
-  que la segunda descarga (los nombres) no la bloquee Figma o el navegador.) ·
+  (con un `setPluginData` agregado a propósito fallan 8 de 9). _Corregido con el primer export real
+  (2026-10-27):_ Figma bloqueó la segunda descarga (el `.names.json` nunca llegó); decidido con el
+  usuario: una sola descarga, con los nombres en su propia sección `decisions` del paquete
+  (aparte de la foto de Figma). El extractor la lee como nombres del plugin y la pasa a las
+  decisiones del proyecto; sigue leyendo `.names.json` sueltos de antes.) ·
   2a ~~decisiones v2~~ (hecho: el extractor junta las fuentes —nombres dentro de paquetes
   viejos, `.names.json`, archivo de decisiones—, relaciona cada nombre por id y, si no está, por
   ruta (`layerIndex`, misma regla que el plugin), combina por fecha `at` (a igual fecha, el que se

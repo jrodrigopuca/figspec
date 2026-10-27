@@ -1,7 +1,8 @@
 // figspec export — exporta un componente en el formato de la API REST de Figma (JSON_REST_V1)
 // junto con íconos (SVG), imágenes, vista previa y nombres de variables: la foto de Figma, que el
 // extractor lee con `node extractor.js <archivo>`. Los nombres que el usuario elige para las capas
-// con nombre vago ("Frame 5") van en otro archivo (formato de decisiones), solo si hay alguno.
+// con nombre vago ("Frame 5") van en el mismo archivo pero en su propia sección, "decisions"
+// (formato de decisiones), solo si hay alguno: una sola descarga.
 // Corre dentro de Figma: no usa la API REST ni consume su cuota.
 // Solo lectura: no escribe nada en el archivo de Figma (ni datos del plugin), así no aparece en el
 // historial de versiones ni genera ruido a quienes diseñan. Ubicar una capa solo mueve la vista.
@@ -45,8 +46,8 @@ figma.ui.onmessage = async (msg) => {
 			const n = await figma.getNodeByIdAsync(msg.id);
 			if (n) figma.viewport.scrollAndZoomIntoView([n]);
 		} else if (msg.type === "export") {
-			const { bundle, names } = await exportRoot(msg.options || {}, msg.names || {});
-			figma.ui.postMessage({ type: "bundle", bundle, names });
+			const bundle = await exportRoot(msg.options || {}, msg.names || {});
+			figma.ui.postMessage({ type: "bundle", bundle });
 		}
 	} catch (e) {
 		fail(e);
@@ -278,12 +279,16 @@ async function exportRoot(options, names) {
 			constraint: { type: "SCALE", value: 1 },
 		});
 	}
-	return { bundle, names: namesFile(node, entry, names, exportedAt) };
+	// Los nombres elegidos, aparte de la foto de Figma pero en el mismo archivo
+	const decisions = namesFile(node, entry, names, exportedAt);
+	if (decisions) bundle.decisions = decisions;
+	return bundle;
 }
 
-// ---------------------------------------------------------------- archivo de nombres
-// Los nombres elegidos en la ventana, en el formato de decisiones (versión 2), para que el
-// extractor los combine con las decisiones del proyecto. null si no se eligió ninguno.
+// ---------------------------------------------------------------- nombres elegidos
+// Los nombres elegidos en la ventana, en el formato de decisiones (versión 2), para la sección
+// "decisions" del paquete: el extractor los combina con las decisiones del proyecto. null si no
+// se eligió ninguno.
 // Cada capa: id, nombre en Figma, ruta y fecha. La ruta permite reconocerla si el id cambia (una
 // copia del componente): pares [nombre, n] desde la raíz (en un set, desde la variante por
 // defecto), con n = posición entre hermanos del mismo nombre, contando las ocultas (como las

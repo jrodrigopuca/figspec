@@ -230,7 +230,10 @@ function main() {
 		nodeId = data.nodeId || nodeId;
 		ctx.fileKey = data.fileKey || "(plugin)";
 		for (const v of Object.values(data.variables || {})) ctx.variables[v.id] = v;
-		// Paquetes de antes del plugin de solo lectura: traían los nombres elegidos adentro
+		// Nombres elegidos en la ventana del plugin: en la sección "decisions" del paquete
+		if (data.decisions && data.decisions.figspec === "decisions")
+			decisionSources.push({ file: `${path.basename(opts.from)} (nombres elegidos en el plugin)`, origin: "plugin", fallbackAt: data.decisions.savedAt || data.exportedAt || "", data: data.decisions });
+		// Paquetes de antes del plugin de solo lectura: traían los nombres elegidos en "names"
 		const names = data.names || {};
 		if (names.root || Object.keys(names.byId || {}).length || Object.keys(names.states || {}).length)
 			decisionSources.push({ file: `${path.basename(opts.from)} (nombres dentro del paquete, plugin anterior)`, origin: "plugin", fallbackAt: data.exportedAt || "", data: { figspec: "decisions", version: 1, names } });

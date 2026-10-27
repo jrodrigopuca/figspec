@@ -1,6 +1,6 @@
 "use strict";
 // El plugin (plugin/code.js) corrido con un `figma` simulado: análisis de la raíz, ubicar sin
-// cambiar la selección, archivo de nombres aparte, solo lectura (el `figma` simulado falla ante
+// cambiar la selección, nombres en su propia sección del paquete, solo lectura (el `figma` simulado falla ante
 // cualquier escritura) y, sobre todo, paridad con el extractor: el plugin copia las reglas de
 // nombres sugeridos y tiene que proponer lo mismo que el extractor usa.
 // Uso: node --test   (sin dependencias)
@@ -103,11 +103,11 @@ async function exportWith(sim, names) {
 	const errors = sim.messages.filter((m) => m.type === "error").map((m) => m.message);
 	assert.deepEqual(plain(errors), [], "el plugin no debe fallar al exportar");
 	const m = last(sim.messages, "bundle");
-	sim.lastNames = m.names;
+	sim.lastNames = m.bundle.decisions || null;
 	return m.bundle;
 }
 
-// Como en el flujo real: el paquete y, si hay, el archivo de nombres en la misma carpeta
+// names: un archivo de nombres aparte junto al paquete (versiones anteriores del plugin)
 function extract(bundle, args = [], names = null) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-plugin-"));
 	fs.writeFileSync(path.join(dir, "in.json"), JSON.stringify(bundle));
@@ -189,7 +189,7 @@ test("ubicar centra la capa sin cambiar la selección; otra selección solo se a
 	assert.equal(bundle.nodeId, doc.id, "exporta la raíz fijada, no la selección actual");
 });
 
-test("los nombres elegidos van en un archivo aparte; el paquete es la foto de Figma", async () => {
+test("los nombres elegidos van en su propia sección del paquete (una sola descarga)", async () => {
 	const doc = sampleDoc();
 	const sim = simulate(doc);
 	await tick();
@@ -198,7 +198,8 @@ test("los nombres elegidos van en un archivo aparte; el paquete es la foto de Fi
 	const bundle = await exportWith(sim, { root: "Nav", byId: { [frame9.id]: "intro card", [rows[0].id]: "" } });
 	const names = plain(sim.lastNames);
 	assert.equal(bundle.figspec, 2);
-	assert.equal(bundle.names, undefined, "el paquete no lleva nombres elegidos");
+	assert.equal(bundle.names, undefined, "no en el formato viejo");
+	assert.deepEqual(plain(bundle.decisions), names, "en la sección decisions, aparte de la foto de Figma");
 	assert.equal(names.figspec, "decisions");
 	assert.equal(names.version, 2);
 	assert.equal(names.origin, "plugin");
@@ -208,9 +209,10 @@ test("los nombres elegidos van en un archivo aparte; el paquete es la foto de Fi
 	assert.deepEqual(names.layers[0].path, [["Frame 9", 0]]);
 	assert.equal(names.layers[0].at, bundle.exportedAt);
 
-	// Sin nombres elegidos no hay archivo
-	await exportWith(sim, { root: "", byId: {}, states: {} });
+	// Sin nombres elegidos no hay sección
+	const plainBundle = await exportWith(sim, { root: "", byId: {}, states: {} });
 	assert.equal(sim.lastNames, null);
+	assert.equal(plainBundle.decisions, undefined);
 
 	// Al reabrir, la ventana empieza vacía: los nombres viven en el archivo, no en Figma
 	const again = simulate(doc);
@@ -219,8 +221,8 @@ test("los nombres elegidos van en un archivo aparte; el paquete es la foto de Fi
 	assert.equal(a.root.value, "");
 	assert.ok(a.rows.every((r) => r.value === ""));
 
-	// El extractor encuentra el archivo de nombres junto al paquete y lo aplica
-	const { spec, byName } = extract(bundle, [], names);
+	// El extractor toma los nombres de la sección del paquete
+	const { spec, byName } = extract(bundle);
 	assert.equal(spec.component.name, "Nav");
 	assert.equal(byName.find((e) => e.name === "Frame 9").className, "introCard");
 	assert.deepEqual(spec.meta.decisions.layers.map((x) => [x.id, x.name, x.origin]), [[frame9.id, "intro card", "plugin"]], "queda en meta.decisions para el visualizador");
@@ -288,7 +290,7 @@ test("estados: el plugin agrupa y nombra igual que el extractor", async () => {
 	assert.deepEqual(Object.values(extractorState), ["active", "default", "default", "disabled", "default2", "default3"]);
 });
 
-test("estados: los nombres elegidos viajan por ítem en el archivo de nombres y el extractor los usa", async () => {
+test("estados: los nombres elegidos viajan por ítem en la sección de nombres y el extractor los usa", async () => {
 	const doc = statesDoc();
 	const sim = simulate(doc);
 	await tick();
@@ -304,7 +306,7 @@ test("estados: los nombres elegidos viajan por ítem en el archivo de nombres y 
 	await tick();
 	assert.deepEqual(last(again.messages, "analysis").repeats[0].groups.map((g) => g.value), ["", "", "", "", ""], "la ventana no recuerda: no se guarda en Figma");
 
-	const { spec } = extract(bundle, ["--extract-repeated"], names);
+	const { spec } = extract(bundle, ["--extract-repeated"]);
 	const sub = Object.values(spec.subcomponents)[0];
 	assert.equal(sub.props.state.default, "normal", "el estado por defecto también se puede renombrar");
 	assert.deepEqual(sub.props.state.options, ["normal", "current", "disabled", "normal2", "normal3"], "los parecidos al de por defecto se numeran desde su nombre");
