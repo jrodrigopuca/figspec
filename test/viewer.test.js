@@ -371,3 +371,34 @@ test("fuentes: instalada si el ancho cambia respecto de alguna genérica", () =>
 	assert.equal(client.fontInstalled(measure(["Inter"]), "Inter"), true);
 	assert.equal(client.fontInstalled(measure([]), "Geist"), false);
 });
+
+// ---------------------------------------------------------------- inspector
+test("inspector: CSS por origen con los selectores reales del .module.css", () => {
+	card({});
+	const tree = client.renderTree(cardData, "Card", { state: "Hover" });
+	const groups = client.cssGroups(cardData, tree);
+	assert.deepEqual(groups.map((g) => [g.origin, g.title]), [["base", "Base"], ["variant", "Si state = Hover"]]);
+	for (const g of groups) assert.ok(cardData.css.Card.includes(`${g.selector} {`), `${g.selector} no está en Card.module.css`);
+	assert.equal(groups[1].selector, '.root:where([data-state="Hover"])');
+	assert.deepEqual(groups[1].decls.map(([k]) => k), ["background-color"]);
+	// Disabled no cambia estilos del root: solo la base
+	assert.equal(client.cssGroups(cardData, client.renderTree(cardData, "Card", { state: "Disabled" })).length, 1);
+});
+
+test("inspector: una instancia muestra su CSS y su ubicación desde el padre", () => {
+	const tree = client.renderTree(cardData, "Card", { state: "Hover" });
+	const tag = tree.children.find((n) => typeof n !== "string" && n.instance);
+	const groups = client.cssGroups(cardData, tag);
+	assert.deepEqual(groups.map((g) => [g.origin, g.file, g.selector]), [
+		["base", "Tag.module.css", ".root"],
+		["placement", "Card.module.css", ".root .tag"],
+	]);
+	for (const g of groups) assert.ok(cardData.css[g.file.replace(".module.css", "")].includes(`${g.selector} {`), g.selector);
+	assert.match(client.cssText(groups), /^\/\* Tag\.module\.css · Base \*\/\n\.root \{\n  width: 40px;/);
+});
+
+test("inspector: tokens dentro de un valor", () => {
+	assert.deepEqual(client.valueParts("1px solid var(--line, #E4E4E7)"), ["1px solid ", { token: "--line", fallback: "#E4E4E7" }]);
+	assert.deepEqual(client.valueParts("var(--a) var(--b, rgba(0, 0, 0, 0.5))"), [{ token: "--a", fallback: null }, " ", { token: "--b", fallback: "rgba(0, 0, 0, 0.5)" }]);
+	assert.deepEqual(client.valueParts("12px"), ["12px"]);
+});

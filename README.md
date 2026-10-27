@@ -151,11 +151,13 @@ El último modo usado se recuerda. Sin vista previa en el paquete solo está el 
 
 Si una fuente del diseño no está instalada en tu equipo, el visualizador lo avisa arriba: esos textos se ven con otra tipografía (el CSS la nombra sin una genérica de respaldo) y en la comparación aparecen distintos. Instálala para comparar.
 
-A la izquierda está el árbol de capas del render (▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente, que se despliega para ver su estructura). Al pasar el puntero por el lienzo o por el árbol se marca la capa en los dos; un clic en el lienzo elige la capa más profunda bajo el puntero (en cualquier modo, también sobre la imagen de Figma) y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor; en el árbol se navega con las flechas. A la derecha, la ruta de la capa elegida y su clase.
+A la izquierda está el árbol de capas del render (▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente, que se despliega para ver su estructura). Al pasar el puntero por el lienzo o por el árbol se marca la capa en los dos; un clic en el lienzo elige la capa más profunda bajo el puntero (en cualquier modo, también sobre la imagen de Figma) y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor; en el árbol se navega con las flechas. A la derecha, el **inspector** de la capa elegida: su ruta (cada parte se puede pulsar), la caja medida en el render (posición desde la esquina del componente, ancho y alto), el texto y de qué prop viene, o, en una instancia, el componente y las props que recibe.
 
 El interruptor **Código** (apagado por defecto, pensado para quien revisa el diseño) muestra en el árbol las clases y los componentes en lugar de los nombres de Figma; `{title}` indica un texto que viene de una prop y `si {showIcon}`, una capa que se muestra según una prop.
 
-En desarrollo: el inspector (caja medida y CSS de la capa) llega en el próximo paso (ver [BACKLOG.md](BACKLOG.md)).
+Con **Código**, el inspector muestra además el CSS de la capa tal como está en los `.module.css`, agrupado por origen: la regla base, las de la variante que se está viendo y, en una instancia, su ubicación desde el componente padre; cada grupo con su archivo y su selector. Los tokens se ven como chips con su color ("Ver valores" muestra el valor en lugar del nombre) y "Copiar CSS" copia los grupos. No muestra estilos calculados por el navegador: lo que ves es lo que se generó.
+
+En desarrollo: ver la lista de cambios pendientes en [BACKLOG.md](BACKLOG.md) (ver [BACKLOG.md](BACKLOG.md)).
 
 ## Pruebas
 

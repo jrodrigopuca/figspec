@@ -144,7 +144,14 @@ carpeta aparte):
   panel izquierdo de lado a lado; cajas de hover y selección en ambos paneles con borde que no
   cambia con el zoom; Esc sube; teclado en el árbol; ruta y clase en el panel derecho. Validado
   en Chrome con eventos simulados (clic sobre "Dashboard" en el panel de Figma, Esc, Código,
-  desplegar una instancia) y arranque de las 24 salidas; 4 pruebas nuevas) · 7 inspector ·
+  desplegar una instancia) y arranque de las 24 salidas; 4 pruebas nuevas) · ~~7 inspector~~ (hecho: ruta, caja medida desde la esquina del
+  componente, texto y prop de origen, instancia con sus props; con Código, `cssGroups` arma el CSS
+  por origen —base, variante que aplica, ubicación desde el padre— con el archivo y el selector
+  real de `moduleCss`, tokens como chips con muestra de color y conmutador nombre/valor, "(se
+  quita en esta variante)" para `unset`, y Copiar CSS. Validado: los 325 grupos de todas las
+  capas de las 24 salidas, en cada combinación de variantes, tienen su selector en el
+  .module.css; en Chrome con menu mobile (token --black-00) y una instancia con ubicación desde el
+  padre; 3 pruebas) ·
   8 ~~aviso de fuentes~~ (adelantado a pedido del usuario el 2026-10-27: `fontFamilies` lee las
   fuentes del CSS y `fontInstalled` mide un texto con cada una contra monospace, serif y
   sans-serif en un canvas; aviso arriba con las que faltan. Validado en Chrome: menu mobile → Geist,

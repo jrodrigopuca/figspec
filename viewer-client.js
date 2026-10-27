@@ -147,7 +147,7 @@ function renderTree(data, name, values) {
 	}
 
 	const cls = (el, c) => (c.classes.has(el.className) ? prefixClass(c.comp.name, el.className) : null);
-	const node = (tag, attrs, children, c, el, extra) => ({ tag, attrs, children: children || [], comp: c.comp.name, el, ...extra });
+	const node = (tag, attrs, children, c, el, extra) => ({ tag, attrs, children: children || [], comp: c.comp.name, el, values: c.v, ...extra });
 
 	function element(el, c, isRoot, placement) {
 		if (!isRoot && el.bind && el.bind.visible && !c.v[el.bind.visible]) return null;
@@ -213,7 +213,7 @@ function renderTree(data, name, values) {
 			if (val !== null) passed[k] = val;
 		}
 		const root = component(sub.name, passed, cls(el, c));
-		root.instance = { el, parent: c.comp.name };
+		root.instance = { el, parent: c.comp.name, parentValues: c.v };
 		return root;
 	}
 
@@ -364,6 +364,70 @@ function hitTest(items, point) {
 	});
 	return best;
 }
+
+// ---------------------------------------------------------------- inspector
+// CSS de una capa tal como está en los .module.css, agrupado por origen:
+//   base       → la regla de la clase (en un set, la de la variante por defecto)
+//   variant    → cada regla de variantStyles que aplica con los valores actuales
+//   placement  → en una instancia, su ubicación desde el padre (tamaño, flex, posición)
+// Cada grupo: { origin, title, file, selector, decls: [[propiedad, valor]] }
+function cssGroups(data, node) {
+	const subs = data.spec.subcomponents || {};
+	const byName = (n) => (n === data.spec.component.name ? data.spec.component : subs[n]);
+	const out = [];
+	const add = (comp, cls, values, origin, prefix) => {
+		const inst = instanceClasses(comp);
+		const base = (comp.styles || {})[cls];
+		const sel = (attrs) => (cls === "root" ? `.root${attrs}` : attrs || inst.has(cls) ? `.root${attrs} .${cls}` : `.${cls}`);
+		if (base && Object.keys(base).length)
+			out.push({ origin, title: prefix || "Base", file: `${comp.name}.module.css`, selector: sel(""), decls: Object.entries(base) });
+		for (const r of comp.variantStyles || []) {
+			if (!r.styles[cls] || !spec.matches(r.when, values)) continue;
+			const when = Object.entries(r.when).map(([k, v]) => `${k} = ${v}`).join(", ");
+			const attrs = `:where(${Object.entries(r.when).map(([k, v]) => `[data-${spec.kebab(k)}="${String(v).replace(/"/g, '\\"')}"]`).join("")})`;
+			out.push({ origin: origin === "base" ? "variant" : origin, title: `${prefix ? prefix + " · " : ""}Si ${when}`, file: `${comp.name}.module.css`, selector: sel(attrs), decls: Object.entries(r.styles[cls]) });
+		}
+	};
+	add(byName(node.comp), node.el.className, node.values || {}, "base");
+	if (node.instance) {
+		const parent = byName(node.instance.parent);
+		add(parent, node.instance.el.className, node.instance.parentValues || {}, "placement", `Ubicación desde ${parent.name}`);
+	}
+	return out;
+}
+
+// Clases de un componente que son instancias de otro: su regla es ".root .clase" (ver moduleCss)
+function instanceClasses(comp) {
+	const out = new Set();
+	const walk = (el) => {
+		if (el.component) out.add(el.className);
+		(el.children || []).forEach(walk);
+	};
+	walk(comp.structure);
+	for (const v of comp.variantStructures || []) walk(v.structure);
+	return out;
+}
+
+// Un valor con tokens en partes: texto y { token, fallback } por cada var(--x, respaldo)
+function valueParts(value) {
+	const parts = [];
+	const re = /var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\)[^()]*)*))?\)/g;
+	let last = 0;
+	for (const m of String(value).matchAll(re)) {
+		if (m.index > last) parts.push(String(value).slice(last, m.index));
+		parts.push({ token: m[1], fallback: m[2] !== undefined ? m[2].trim() : null });
+		last = m.index + m[0].length;
+	}
+	if (last < String(value).length) parts.push(String(value).slice(last));
+	return parts;
+}
+
+// Los grupos como CSS para copiar (con el archivo y el origen como comentario)
+function cssText(groups) {
+	return groups.map((g) => `/* ${g.file} · ${g.title} */\n${g.selector} {\n${g.decls.map(([k, v]) => `  ${k}: ${v};`).join("\n")}\n}`).join("\n\n");
+}
+
+const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\))$/i;
 
 // ---------------------------------------------------------------- comparación
 // Modos del lienzo. Todos usan la misma escala y el mismo origen: el componente cae sobre la
@@ -664,8 +728,52 @@ function boot(doc, data) {
 	canvas.addEventListener("mouseleave", () => hover(null));
 	canvas.addEventListener("click", (e) => select(layerAt(e)));
 
-	// Panel derecho: la capa elegida (el inspector completo llega después)
+	// ---------------------------------------------------------------- inspector
+	// Panel derecho: la capa elegida. Para todos: ruta, caja medida, texto o instancia; con Código,
+	// además el CSS de los .module.css por origen, con los tokens como chips.
+	const TOKENS_KEY = "figspec.viewer.tokens";
+	let showTokens = stored(TOKENS_KEY) !== "value";
+	const tokens = design.tokens || {};
 	const selectionBox = h("div", { class: "fv-selection" });
+	const round = (n) => String(Math.round(n * 100) / 100);
+	function measured(layer) {
+		const el = elementOf.get(layer.node);
+		const rootEl = elementOf.get(tree);
+		if (!el || !rootEl) return null;
+		const r = el.getBoundingClientRect();
+		const rr = rootEl.getBoundingClientRect();
+		return { x: (r.left - rr.left) / zoom, y: (r.top - rr.top) / zoom, width: r.width / zoom, height: r.height / zoom };
+	}
+	const swatch = (color) => h("span", { class: "fv-swatch", style: `background:${color}`, "aria-hidden": "true" });
+	function valueView(v) {
+		return valueParts(v).map((p) => {
+			if (typeof p === "string") {
+				const t = p.trim();
+				return COLOR_RE.test(t) ? [swatch(t), p] : p;
+			}
+			const actual = tokens[p.token] || p.fallback;
+			return h("span", { class: "fv-token", title: showTokens ? `Valor: ${actual || "—"}` : `Token: ${p.token}` },
+				actual && COLOR_RE.test(actual) && swatch(actual),
+				showTokens ? p.token : actual || p.token);
+		});
+	}
+	const section = (title, ...kids) => h("section", { class: "fv-insp" }, h("h3", { text: title }), ...kids);
+	const pairs = (list) => h("dl", {}, list.filter(Boolean).map(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)]));
+	async function copy(text, button) {
+		try {
+			await navigator.clipboard.writeText(text);
+		} catch {
+			const t = doc.createElement("textarea");
+			t.value = text;
+			doc.body.append(t);
+			t.select();
+			doc.execCommand("copy");
+			t.remove();
+		}
+		const old = button.textContent;
+		button.textContent = "Copiado";
+		setTimeout(() => (button.textContent = old), 1200);
+	}
 	function showSelection() {
 		if (!selected) {
 			selectionBox.replaceChildren(h("p", { class: "fv-hint", text: "Haz clic en el lienzo o en una capa para verla. Esc sube al contenedor." }));
@@ -673,19 +781,46 @@ function boot(doc, data) {
 		}
 		const n = selected.node;
 		const el = n.instance ? n.instance.el : n.el;
+		const lab = treeLabel(selected, code);
 		const crumbs = [];
 		for (let p = selected; p; p = p.parent) crumbs.unshift(p);
-		selectionBox.replaceChildren(
+		const m = measured(selected);
+		const parts = [
 			h("nav", { class: "fv-crumbs", "aria-label": "Ruta" }, crumbs.map((c, i) => [
 				i > 0 && h("span", { "aria-hidden": "true", text: " › " }),
-				h("button", { type: "button", class: "fv-link", text: treeLabel(c, code).main, onclick: () => select(c) }),
+				h("button", { type: "button", class: "fv-link", "aria-current": c === selected ? "true" : null, text: treeLabel(c, code).main, onclick: () => select(c) }),
 			])),
-			h("dl", {},
-				h("dt", { text: "Capa en Figma" }), h("dd", { text: el.name || "—" }),
-				h("dt", { text: "Clase" }), h("dd", { text: `.${el.className}` }),
-				h("dt", { text: "Componente" }), h("dd", { text: n.instance ? `${n.comp} (instancia en ${n.instance.parent})` : n.comp }),
-			),
-		);
+			h("p", { class: "fv-insp-title" }, h("span", { class: `fv-kind fv-kind-${selected.kind}`, text: lab.icon }), " ", h("strong", { text: lab.main }), lab.sub && h("span", { class: "fv-sub", text: ` ${lab.sub}` })),
+			m && section("Caja", pairs([["X", `${round(m.x)} px`], ["Y", `${round(m.y)} px`], ["Ancho", `${round(m.width)} px`], ["Alto", `${round(m.height)} px`]]),
+				h("p", { class: "fv-hint", text: "Medida en el render, desde la esquina del componente." })),
+		];
+		if (selected.kind === "text") {
+			const bound = el.bind && el.bind.text;
+			parts.push(section("Texto", h("p", { class: "fv-text", text: layerText(n) || "(vacío)" }), bound && h("p", { class: "fv-hint", text: `Viene de la prop ${bound}.` })));
+		}
+		if (n.instance) {
+			const sub = (design.subcomponents || {})[n.comp] || {};
+			const props = Object.keys(sub.props || {}).filter((k) => n.values[k] !== undefined);
+			parts.push(section("Instancia",
+				pairs([["Componente", n.comp], ["En", n.instance.parent]]),
+				props.length > 0 && h("h4", { text: "Props" }),
+				props.length > 0 && pairs(props.map((k) => [k, typeof n.values[k] === "string" && n.values[k].endsWith(".svg") ? n.values[k].split("/").pop() : String(n.values[k])])),
+			));
+		}
+		if (code) {
+			const groups = cssGroups(data, n);
+			const copyBtn = h("button", { type: "button", text: "Copiar CSS", onclick: () => copy(cssText(groups), copyBtn) });
+			const tokBtn = h("button", { type: "button", title: "Alterna entre el nombre del token y su valor", text: showTokens ? "Ver valores" : "Ver tokens",
+				onclick: () => { showTokens = !showTokens; store(TOKENS_KEY, showTokens ? "token" : "value"); showSelection(); } });
+			parts.push(section("CSS",
+				h("div", { class: "fv-insp-tools" }, tokBtn, copyBtn),
+				groups.length ? groups.map((g) => h("div", { class: `fv-css fv-css-${g.origin}` },
+					h("div", { class: "fv-css-head" }, h("span", { text: g.title }), h("code", { text: `${g.file} · ${g.selector}` })),
+					h("ul", {}, g.decls.map(([k, v]) => h("li", {}, h("span", { class: "fv-prop", text: `${k}: ` }), v === "unset" ? h("span", { class: "fv-hint", text: "(se quita en esta variante)" }) : valueView(v)))),
+				)) : h("p", { class: "fv-hint", text: "Esta capa no tiene estilos propios." }),
+			));
+		} else parts.push(h("p", { class: "fv-hint", text: "Prende Código para ver el CSS de esta capa." }));
+		selectionBox.replaceChildren(...parts);
 	}
 	const codeSwitch = h("button", { type: "button", class: "fv-switch", "aria-pressed": String(code), title: "Muestra las clases y el código generado",
 		onclick: () => {
@@ -724,7 +859,7 @@ function boot(doc, data) {
 			),
 			h("div", { class: "fv-center" }, toolbar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
-				h("h2", { text: "Selección" }),
+				h("h2", { text: "Inspector" }),
 				selectionBox,
 				h("h2", { text: "Detalles" }),
 				h("dl", {},
@@ -782,4 +917,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
