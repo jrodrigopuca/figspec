@@ -139,6 +139,7 @@ const ctx = {
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
 	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
+	variantInfo: new WeakMap(), // componente → { combos: [props de cada variante], d: índice por defecto }
 	imageRefs: new Set(),
 	notes: new Set(),
 	generated: new Set(), // archivos escritos en la carpeta de salida (rutas relativas)
@@ -456,6 +457,9 @@ function assemble(name, props, variants, defaults, isSub, code) {
 			if (!props[k]) props[k] = { type: t };
 
 	const res = { name: code, figmaName: name, props };
+	// Combinaciones de variantes en el orden de Figma y cuál es la por defecto (para extraer
+	// repetidos que cambian según la variante)
+	ctx.variantInfo.set(res, { combos: built.map((b) => b.props), d });
 	ctx.instanceClasses.set(
 		res,
 		new Set(built.flatMap((b) => [...b.instances])),
@@ -2028,19 +2032,9 @@ function describeRepeated(parent, items, comp) {
 		for (let i = 0; i < n; i++) compare(els.map((e) => e.children[i]));
 	})(items);
 
-	// El tamaño de un ícono depende de su dibujo, no del estado: no cuenta para agrupar
-	const styleKey = (el) => {
-		const all = [];
-		(function collect(e) {
-			const { width, height, ...rest } = styleOf(e);
-			all.push(e.tag === "svg" ? rest : styleOf(e));
-			(e.children || []).forEach(collect);
-		})(el);
-		return JSON.stringify(all);
-	};
 	const groups = new Map();
 	for (const it of items) {
-		const k = styleKey(it);
+		const k = subtreeKey(it, styleOf);
 		if (!groups.has(k)) groups.set(k, []);
 		groups.get(k).push(it.className);
 	}
@@ -2048,6 +2042,19 @@ function describeRepeated(parent, items, comp) {
 	if (Object.keys(varies).length) rep.varies = varies;
 	if (groups.size > 1) rep.styleGroups = [...groups.values()];
 	return rep;
+}
+
+// Clave de los estilos de un ítem y todo su contenido, para agrupar los que se ven igual. El tamaño
+// de un ícono depende de su dibujo, no del estado: no cuenta.
+function subtreeKey(el, styleOf) {
+	const all = [];
+	(function collect(e) {
+		const s = styleOf(e);
+		const { width, height, ...rest } = s;
+		all.push(e.tag === "svg" ? rest : s);
+		(e.children || []).forEach(collect);
+	})(el);
+	return JSON.stringify(all);
 }
 
 // ---------------------------------------------------------------- extraer repetidos (--extract-repeated)
@@ -2062,9 +2069,11 @@ const PLACEMENT = new Set([
 
 function extractRepeated(comp, subs) {
 	if (!comp.repeated) return;
-	if (comp.variantStyles || comp.variantStructures || comp.variantText || comp.variantProps) {
+	// Si la estructura cambia entre variantes (un ítem más, otro ícono), los ítems no son el mismo
+	// patrón en todas: solo se reportan
+	if (comp.variantStructures) {
 		ctx.notes.add(
-			`--extract-repeated: ${comp.name} tiene variantes; sus estructuras repetidas solo se reportan (repeated).`,
+			`--extract-repeated: la estructura de ${comp.name} cambia entre variantes; sus estructuras repetidas solo se reportan (repeated).`,
 		);
 		return;
 	}
@@ -2079,6 +2088,28 @@ function extractRepeated(comp, subs) {
 	}
 }
 
+// Estilos de una clase en una combinación de variantes: los base (variante por defecto) más las
+// reglas de variantStyles que aplican a esa combinación ("unset" = la propiedad no está)
+function resolvedStyles(comp, cls, combo) {
+	const out = { ...((comp.styles || {})[cls] || {}) };
+	for (const r of comp.variantStyles || [])
+		if (matchesWhen(r.when, combo) && r.styles[cls]) Object.assign(out, r.styles[cls]);
+	for (const k of Object.keys(out)) if (out[k] === "unset") delete out[k];
+	return out;
+}
+
+// Texto de un elemento en una combinación de variantes (variantText, si lo cambia)
+function resolvedText(comp, el, combo) {
+	let t = el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
+	for (const r of comp.variantText || [])
+		if (matchesWhen(r.when, combo) && el.className in r.text) t = r.text[el.className] ?? "";
+	return t;
+}
+
+function matchesWhen(when, combo) {
+	return Object.entries(when).every(([k, v]) => combo[k] === v);
+}
+
 function findEl(el, cls) {
 	if (el.className === cls) return el;
 	for (const c of el.children || []) {
@@ -2089,22 +2120,53 @@ function findEl(el, cls) {
 }
 
 function repeatedSub(comp, parent, items, rep) {
-	const styleOf = (el) => comp.styles[el.className] || {};
-	const content = (el) =>
-		el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
+	// En un componente con variantes, el aspecto de un ítem depende de él y de la variante del padre:
+	// se trabaja con pares (variante, ítem). Sin variantes hay una sola combinación ({}).
+	const info = ctx.variantInfo.get(comp) || { combos: [{}], d: 0 };
+	const defCombo = info.combos[info.d];
+	const combos = [defCombo, ...info.combos.filter((_, i) => i !== info.d)];
+	const multi = combos.length > 1;
+	const styleOf = (el, combo = defCombo) => resolvedStyles(comp, el.className, combo);
+	const content = (el, combo = defCombo) => resolvedText(comp, el, combo);
 	const at = (item, p) => p.reduce((e, i) => e.children[i], item);
 	const distinct = (vals) => new Set(vals.map((v) => JSON.stringify(v))).size;
 
-	// Grupos de estilo → estados. El más numeroso es el estado por defecto ("default", salvo que en
-	// el plugin se le haya dado otro nombre) y define la estructura base.
-	const groups = rep.styleGroups || [items.map((i) => i.className)];
-	const reps = groups.map((g) => items.find((i) => i.className === g[0]));
-	const def = groups.reduce((best, g, i) => (g.length > groups[best].length ? i : best), 0);
-	const states = stateNames(groups, reps, def, styleOf, items);
+	// Props de una instancia dentro de los ítems que cambian por variante: no se pueden expresar
+	const inside = new Set();
+	for (const it of items)
+		(function walk(e) {
+			inside.add(e.className);
+			(e.children || []).forEach(walk);
+		})(it);
+	if ((comp.variantProps || []).some((r) => Object.keys(r.props).some((c) => inside.has(c)))) {
+		ctx.notes.add(
+			`--extract-repeated: los ítems de ${comp.name} (${items[0].className}…) no se extrajeron: una instancia dentro de ellos cambia de props según la variante.`,
+		);
+		return null;
+	}
+
+	// Grupos de pares con el mismo aspecto → estados. El que tiene más ítems en la variante por
+	// defecto es el estado por defecto ("default", salvo que en el plugin se le haya dado otro
+	// nombre) y define la estructura base.
+	const pairs = combos.flatMap((combo) => items.map((item) => ({ combo, item })));
+	const groups = [];
+	const byKey = new Map();
+	for (const pr of pairs) {
+		const k = subtreeKey(pr.item, (e) => styleOf(e, pr.combo));
+		if (!byKey.has(k)) {
+			byKey.set(k, []);
+			groups.push(byKey.get(k));
+		}
+		byKey.get(k).push(pr);
+	}
+	const inDefault = (g) => g.filter((pr) => pr.combo === defCombo).length;
+	const def = groups.reduce((best, g, i) => (inDefault(g) > inDefault(groups[best]) ? i : best), 0);
+	const reps = groups.map((g) => g[0]);
+	const states = stateNames(groups, reps, def, styleOf, defCombo);
 	const defName = states[def];
-	const stateOf = new Map();
-	groups.forEach((g, i) => g.forEach((c) => stateOf.set(c, states[i])));
-	const tplItem = reps[def];
+	const stateOf = (item, combo) =>
+		states[groups.findIndex((g) => g.some((pr) => pr.item === item && pr.combo === combo))];
+	const tplItem = reps[def].item;
 
 	// Recorrido en paralelo: cada posición del árbol con su elemento en cada ítem
 	const props = {};
@@ -2122,11 +2184,14 @@ function repeatedSub(comp, parent, items, rep) {
 		taken.add(n);
 		return n;
 	};
+	// Textos que cambian entre ítems o entre variantes del padre → props
 	const varyingTexts = [];
-	(function scan(els, p) {
-		if (els[0].tag === "span" && distinct(els.map(content)) > 1) varyingTexts.push(p.join("."));
-		(els[0].children || []).forEach((_, i) => scan(els.map((e) => e.children[i]), [...p, i]));
-	})(items, []);
+	(function scan(p) {
+		const tpl = at(items[0], p);
+		if (tpl.tag === "span" && distinct(pairs.map((pr) => content(at(pr.item, p), pr.combo))) > 1)
+			varyingTexts.push(p.join("."));
+		(tpl.children || []).forEach((_, i) => scan([...p, i]));
+	})([]);
 
 	const styles = {};
 	const perState = new Map(states.map((s) => [s, {}]));
@@ -2190,12 +2255,13 @@ function repeatedSub(comp, parent, items, rep) {
 		// Estilos por estado (cada estado toma los de un ítem representativo)
 		// El tamaño de un ícono depende del dibujo: si cambia dentro de un mismo estado no se puede
 		// expresar por estado y se usa el del SVG (que Figma exporta redondeado a enteros)
-		const size = (e) => [styleOf(e).width, styleOf(e).height];
-		const svgSize =
-			tpl.tag === "svg" &&
-			groups.some((g) => distinct(g.map((c) => size(at(items.find((i) => i.className === c), p)))) > 1);
+		const size = (pr) => {
+			const s = styleOf(at(pr.item, p), pr.combo);
+			return [s.width, s.height];
+		};
+		const svgSize = tpl.tag === "svg" && groups.some((g) => distinct(g.map(size)) > 1);
 		groups.forEach((g, gi) => {
-			const s = { ...styleOf(at(reps[gi], p)) };
+			const s = { ...styleOf(at(reps[gi].item, p), reps[gi].combo) };
 			for (const k of Object.keys(s))
 				// La raíz deja la ubicación al padre; un ícono cuyo tamaño cambia según el
 				// dibujo usa el del propio SVG
@@ -2248,10 +2314,12 @@ function repeatedSub(comp, parent, items, rep) {
 	sub.extractedFrom = comp.name;
 	ctx.instanceClasses.set(sub, instClasses);
 
-	// El padre: una instancia por ítem; la ubicación va en una clase compartida si es igual en todos
+	// El padre: una instancia por ítem; la ubicación va en una clase compartida si es igual en todos.
+	// Con variantes cada ítem conserva su clase: sus props (el estado) cambian según la variante y
+	// variantProps se indexa por clase.
 	const placement = (it) =>
 		Object.fromEntries(Object.entries(styleOf(it)).filter(([k]) => PLACEMENT.has(k)));
-	const shared = distinct(items.map(placement)) === 1;
+	const shared = !multi && distinct(items.map(placement)) === 1;
 	const parentTaken = new Set(Object.keys(comp.styles));
 	const removed = new Set();
 	for (const it of items)
@@ -2274,19 +2342,62 @@ function repeatedSub(comp, parent, items, rep) {
 	}
 	comp.styles = newStyles;
 	const instances = ctx.instanceClasses.get(comp);
+	// Props de un ítem en una combinación de variantes del padre
+	const propsFor = (k, combo) => {
+		const p = {};
+		if (props.state) p.state = stateOf(k, combo);
+		for (const s of sources) {
+			const e = at(k, s.path);
+			p[s.prop] = s.kind === "text" ? content(e, combo) : s.kind === "icon" ? e.src : !e.hidden;
+		}
+		return p;
+	};
 	parent.children = parent.children.map((k) => {
 		if (!items.includes(k)) return k;
 		const inst = { name: k.name, className: shared ? placeCls : k.className, component: sub.name };
-		const p = {};
-		if (props.state) p.state = stateOf.get(k.className);
-		for (const s of sources) {
-			const e = at(k, s.path);
-			p[s.prop] = s.kind === "text" ? content(e) : s.kind === "icon" ? e.src : !e.hidden;
-		}
+		const p = propsFor(k, defCombo);
 		if (Object.keys(p).length) inst.props = p;
 		instances.add(inst.className);
 		return inst;
 	});
+	if (multi) {
+		// Lo que cambia según la variante del padre (p. ej. el estado) va a variantProps, con el
+		// mismo agrupado que los estilos
+		const built = info.combos.map((combo) => ({
+			props: combo,
+			classes: new Set(items.map((i) => i.className)),
+			styles: Object.fromEntries(items.map((k) => [k.className, propsFor(k, combo)])),
+		}));
+		const rules = diffStyles(built, info.d, null).variantStyles.map((r) => ({
+			when: r.when,
+			props: r.styles,
+		}));
+		if (rules.length) comp.variantProps = [...(comp.variantProps || []), ...rules];
+
+		// Recién ahora se limpian las reglas por variante del padre (propsFor lee sus textos): de
+		// los ítems queda solo su ubicación; de su contenido, nada (está en el subcomponente)
+		const own = new Set(items.map((i) => i.className));
+		const keep = (rules, pick) =>
+			(rules || [])
+				.map((r) => ({ ...r, ...pick(r) }))
+				.filter((r) => Object.keys(r.styles || r.text).length);
+		comp.variantStyles = keep(comp.variantStyles, (r) => {
+			const styles = {};
+			for (const [cls, decl] of Object.entries(r.styles)) {
+				if (!removed.has(cls)) styles[cls] = decl;
+				else if (own.has(cls)) {
+					const pl = Object.fromEntries(Object.entries(decl).filter(([k]) => PLACEMENT.has(k)));
+					if (Object.keys(pl).length) styles[cls] = pl;
+				}
+			}
+			return { styles };
+		});
+		comp.variantText = keep(comp.variantText, (r) => ({
+			text: Object.fromEntries(Object.entries(r.text).filter(([cls]) => !removed.has(cls))),
+		}));
+		if (!comp.variantStyles.length) delete comp.variantStyles;
+		if (!comp.variantText.length) delete comp.variantText;
+	}
 	return sub;
 }
 
@@ -2324,26 +2435,37 @@ function valueWords(v) {
 		.filter(Boolean);
 }
 
-// Nombres de estado. Si en el plugin se nombró algún ítem del grupo, ese nombre; si no, según
-// cómo se ve el grupo frente al más numeroso (default): menos opacidad → disabled; un único ítem
-// con otro fondo → active; si no, default. Si un nombre se repite se numera (disabled2,
-// default2): son estados distintos en el diseño.
-function stateNames(groups, reps, def, styleOf, items) {
-	const op = (el) => parseFloat(styleOf(el).opacity || "1");
-	const bg = (el) => styleOf(el)["background-color"] || styleOf(el).background || "";
+// Nombres de estado de los grupos de pares (variante, ítem). Si en el plugin se nombró algún ítem
+// del grupo, ese nombre; si no, según cómo se ve el grupo frente al de por defecto: un aspecto que
+// solo aparece en una variante del padre toma el nombre de esa variante (State=Off → off); menos
+// opacidad → disabled; un único ítem con otro fondo → active; si no, default. Si un nombre se
+// repite se numera (disabled2, default2): son estados distintos en el diseño.
+function stateNames(groups, reps, def, styleOf, defCombo) {
+	const st = (pr) => styleOf(pr.item, pr.combo);
+	const op = (pr) => parseFloat(st(pr).opacity || "1");
+	const bg = (pr) => st(pr)["background-color"] || st(pr).background || "";
+	const onlyIn = (g) => {
+		const combo = g[0].combo;
+		if (combo === defCombo || g.some((pr) => pr.combo !== combo)) return null;
+		const differs = Object.entries(combo).filter(([k, v]) => defCombo[k] !== v);
+		return camel(differs.map(([, v]) => v).join(" ")) || null;
+	};
 	const auto = groups.map((g, i) =>
 		i === def
 			? "default"
-			: op(reps[i]) < op(reps[def])
-				? "disabled"
-				: g.length === 1 && bg(reps[i]) !== bg(reps[def])
-					? "active"
-					: "default",
+			: onlyIn(g) ||
+				(op(reps[i]) < op(reps[def])
+					? "disabled"
+					: g.length === 1 && bg(reps[i]) !== bg(reps[def])
+						? "active"
+						: "default"),
 	);
+	// El nombre elegido en el plugin es el del ítem en la variante por defecto (es la que se ve)
 	const chosen = groups.map((g) => {
 		const picked = [];
-		for (const cls of g) {
-			const id = ctx.elId.get(items.find((i) => i.className === cls));
+		for (const pr of g) {
+			if (pr.combo !== defCombo) continue;
+			const id = ctx.elId.get(pr.item);
 			const name = ctx.statesById.get(id);
 			if (name) {
 				ctx.namesUsed.add(id);

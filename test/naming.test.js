@@ -190,7 +190,8 @@ test("extracción: varios textos que cambian → label, label2", () => {
 	assert.deepEqual(r.spec.component.structure.children[2].props, { label: "Eva", label2: "Eva@mail.com" });
 });
 
-test("extracción: en un componente con variantes solo se reporta", () => {
+test("extracción: si la estructura cambia entre variantes, solo se reporta", () => {
+	// Los textos se llaman como su contenido ("aOn", "aOff"): las capas no coinciden entre variantes
 	const variant = (state) => ({
 		id: `${++seq}:1`, name: `State=${state}`, type: "COMPONENT", layoutMode: "VERTICAL", absoluteBoundingBox: box(100, 100),
 		children: ["a", "b", "c"].map((s) => F("Row", "HORIZONTAL", [T(s + state)])),
@@ -284,4 +285,46 @@ test("estados elegidos: dos nombres distintos en un mismo grupo usan el primero 
 		names: { byId: {}, states: { [a.id]: "normal", [b.id]: "otro", [d.id]: "off" } } });
 	assert.deepEqual(r.spec.subcomponents.Item.props.state.options, ["normal", "off"]);
 	assert.ok(r.spec.meta.notes.some((n) => /nombres de estado distintos/.test(n)));
+});
+
+// ---------------------------------------------------------------- extraer repetidos en componentes con variantes
+function listSet({ offRows, onRows } = {}) {
+	const dark = { fills: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }] };
+	const row = (label, extra) => F("Row", "HORIZONTAL", [{ ...T(label), name: "Label" }], extra);
+	const variant = (state, rows) => ({ id: `${++seq}:1`, name: `State=${state}`, type: "COMPONENT", layoutMode: "VERTICAL", absoluteBoundingBox: box(100, 100), children: rows });
+	return {
+		id: `${++seq}:1`, name: "List", type: "COMPONENT_SET", absoluteBoundingBox: box(300, 100),
+		componentPropertyDefinitions: { State: { type: "VARIANT", defaultValue: "On", variantOptions: ["On", "Off"] } },
+		children: [
+			variant("On", onRows || [row("Inicio", dark), row("Perfil"), row("Ajustes")]),
+			variant("Off", offRows || ["Inicio", "Perfil", "Ajustes"].map((l) => row(l, { opacity: 0.4 }))),
+		],
+	};
+}
+
+test("variantes: los estados combinan ítem y variante del padre; el padre los cambia por variante", () => {
+	const r = extract(listSet(), ["--extract-repeated"]);
+	const row = r.spec.subcomponents.Row;
+	assert.deepEqual(row.props.state.options, ["default", "active", "off"], "off: el aspecto que solo existe en State=Off");
+	const uses = r.spec.component.structure.children;
+	assert.deepEqual(uses.map((u) => [u.className, u.props.state]), [["row", "active"], ["row2", "default"], ["row3", "default"]]);
+	assert.deepEqual(r.spec.component.variantProps, [
+		{ when: { state: "Off" }, props: { row: { state: "off" }, row2: { state: "off" }, row3: { state: "off" } } },
+	]);
+	assert.equal(r.spec.component.variantStyles, undefined, "los estilos de las filas pasaron al subcomponente");
+});
+
+test("variantes: un texto que cambia según la variante del padre es una prop por variante", () => {
+	const row = (label, extra) => F("Row", "HORIZONTAL", [{ ...T(label), name: "Label" }], extra);
+	const r = extract(listSet({ offRows: [row("Inicio (off)"), row("Perfil"), row("Ajustes")] }), ["--extract-repeated"]);
+	assert.deepEqual(r.spec.component.variantProps, [{ when: { state: "Off" }, props: { row: { label: "Inicio (off)", state: "default" } } }]);
+	assert.equal(r.spec.component.variantText, undefined, "el texto pasó a ser la prop label");
+});
+
+test("variantes: el nombre elegido en el plugin es el del ítem en la variante por defecto", () => {
+	const set = listSet();
+	const [first] = set.children[0].children;
+	const r = extract(set, ["--extract-repeated"], { figspec: 2, name: "List", nodeId: set.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {},
+		names: { byId: {}, states: { [first.id]: "current" } } });
+	assert.deepEqual(r.spec.subcomponents.Row.props.state.options, ["default", "current", "off"]);
 });

@@ -70,7 +70,18 @@ carpeta aparte):
   (`defaultNavItems`). `key` = `label` si es único, si no el índice. Solo si todo el grupo está
   junto y comparte la clase de ubicación; si no, instancias explícitas. Verificado: el HTML del menú
   real es idéntico al de las instancias explícitas, y con datos propios renderiza bien (incluye aria).
-- [ ] Extraer repetidos en componentes con variantes (hoy solo se reportan).
+- [x] Extraer repetidos en componentes con variantes. Los estados salen de los pares (variante del
+  padre × ítem), reconstruyendo los estilos y textos de cada variante (base + `variantStyles` /
+  `variantText`); un aspecto que solo aparece en una variante toma su nombre (`State=Off` → `off`).
+  El padre conserva una clase por ítem y expresa lo que cambia por variante (estado, texto) en
+  `variantProps`; de sus reglas por variante quedan solo la ubicación de los ítems. El nombre
+  elegido en el plugin vale para el ítem en la variante por defecto. Sin variantes, la salida es
+  idéntica a la anterior (menú real y 10 JSON de prueba). Verificado: capturas de `List` en `On` y
+  `Off` idénticas píxel a píxel extrayendo y sin extraer; `tsc --strict`; 3 pruebas nuevas.
+  _Límites:_ si la estructura cambia entre variantes (incluye textos nombrados por su contenido, que
+  no coinciden entre variantes: "Enviar" / "Cargando…") o una instancia dentro de los ítems cambia
+  de props según la variante, solo se reportan. En el padre con variantes no se usa `items.map`
+  (cada ítem tiene su clase para `variantProps`).
 
 **Límites conocidos**
 - [ ] `id` internos de un SVG (clipPath, mask) repetidos si el ícono aparece varias veces.
@@ -313,8 +324,8 @@ carpeta aparte):
   inconsistencias del diseño: "Pack" y "Logs" usan Roboto 500 · 14px en vez de Geist 700 · 12px);
   captura en Chrome igual a la `preview.png`; `tsc --strict` sobre el menú, 7 JSON de prueba y 7
   casos genéricos; 21 pruebas en `test/naming.test.js`. Sin la opción, la salida no cambia.
-  _Pendiente:_ extraer en componentes con variantes. (Hechos: nombrar estados desde el plugin,
-  paso 3b; `aria-*` según el nombre del estado e `items.map(...)`, ver "En mira".)
+  (Completado después: nombrar estados desde el plugin, paso 3b; `aria-*` según el nombre del
+  estado, `items.map(...)` y extracción en componentes con variantes, ver "En mira".)
 
 ## P3
 
