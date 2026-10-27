@@ -123,7 +123,7 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 - Las instancias de otros componentes reciben su ubicación (tamaño, flex, posición) vía `className` desde el módulo del padre.
 - Los íconos monocromos usan `currentColor`: su color sale de `color` en CSS, siempre que el SVG vaya inline (por ejemplo, con SVGR).
 - `component.json` incluye `meta.notes` con las convenciones y aproximaciones aplicadas a ese componente.
-- `meta.format` es la versión del formato de `component.json` (hoy `1`); cambia si la estructura deja de ser compatible. Con la vista previa del plugin, `meta.preview` indica cómo superponerla al componente: `{ file, width, height, scale, offset }`, donde `offset` es la posición del componente dentro de la imagen en píxeles de la imagen (la imagen puede ser más grande por sombras o desenfoques).
+- `meta.format` es la versión del formato de `component.json` (hoy `1`); cambia si la estructura deja de ser compatible. Con la vista previa del plugin, `meta.preview` indica cómo superponerla al componente: `{ file, width, height, scale, offset }`, donde `offset` es la posición del componente dentro de la imagen en píxeles de la imagen (la imagen puede ser más grande por sombras o desenfoques). En un set, `meta.preview.variants` trae la posición y el tamaño de cada variante en la imagen (`{ when, offset, width, height }`).
 - `inconsistencies.md` (solo si hay alguna) lista posibles errores del diseño para revisar con UX: elementos repetidos que difieren solo en tipografía, colores escritos a mano que coinciden con un estilo o variable, y textos con los valores de un estilo de texto que no lo aplican. Usa los nombres de capa de Figma para que sea fácil encontrarlos.
 - Si el texto se ve más grueso que en Figma (Chrome en macOS), agrega en tu CSS global `-webkit-font-smoothing: antialiased`: Figma dibuja el texto con un suavizado más fino. Es una decisión de tu proyecto, no del componente.
 - `repeated` señala grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas): qué cambia entre ellos (`varies`) y cuáles comparten estilos (`styleGroups`, posibles estados). Son candidatos a un subcomponente con `items.map(...)`, y sirven para detectar inconsistencias del diseño.
@@ -152,6 +152,14 @@ Arriba se elige el modo. Todos usan la misma escala y el mismo origen: el compon
 
 El último modo usado se recuerda. Zoom con los botones de arriba, `Cmd/Ctrl+0` (ajustar al lienzo) y `Cmd/Ctrl+1` (100 %).
 
+### Variantes y props
+
+Sobre el lienzo hay un control por cada prop del componente: una lista para las variantes, los íconos y los intercambios de instancia, una casilla para los booleanos y un campo para los textos. Arranca con los valores de Figma; "Restablecer" vuelve a ellos. La selección y lo desplegado en el árbol se conservan al cambiar.
+
+- En un **set de variantes**, la vista previa trae todas: el visualizador muestra la parte de la imagen con la variante elegida y ubica el render encima, así se puede comparar cada una.
+- Si cambias un texto o una opción, avisa que la imagen de Figma sigue mostrando los originales. Si la imagen no tiene la combinación elegida, solo queda el modo Render.
+- En **Componente** se elige también un subcomponente para verlo suelto, con el tamaño y los valores de su primera instancia. No tiene vista previa propia: "Ver en contexto" vuelve al componente principal con esa instancia elegida.
+
 ### Capas e inspector
 
 - **Capas** (izquierda): el árbol del render, con un ícono por tipo: ▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente (se despliega para ver su estructura). Se recorre con las flechas.
@@ -171,7 +179,6 @@ El interruptor **Código** está apagado por defecto: así la vista sirve a quie
 - **Archivos faltantes**: si la salida estaba incompleta al generarlo, avisa qué íconos o imágenes no se pudieron incluir.
 - **Componentes translúcidos** (con desenfoque de fondo): la vista previa incluye lo que había detrás en Figma, así que el fondo se ve distinto.
 - **Sin vista previa** en el paquete (exportado sin «Vista previa (PNG)»): solo está el modo Render.
-- Por ahora muestra el componente con los valores por defecto de sus props; los controles para cambiar variantes y props están en [BACKLOG.md](BACKLOG.md).
 
 ## Pruebas
 

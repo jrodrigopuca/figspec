@@ -421,15 +421,23 @@ function previewMeta(root) {
 	if (!drawn || !box || !drawn.width) return null;
 	const scale = rd(width / drawn.width);
 	ctx.notes.add(
-		"meta.preview: preview.png es lo que Figma dibuja del nodo exportado (incluye sombras y, en un set, todas las variantes); offset es la posición del componente dentro de la imagen, en píxeles de la imagen (scale = píxeles por px de Figma).",
+		"meta.preview: preview.png es lo que Figma dibuja del nodo exportado (incluye sombras y, en un set, todas las variantes); offset es la posición del componente dentro de la imagen, en píxeles de la imagen (scale = píxeles por px de Figma). En un set, variants trae la posición y el tamaño de cada variante.",
 	);
-	return {
-		file: "preview.png",
-		width,
-		height,
-		scale,
-		offset: { x: rd((box.x - drawn.x) * scale), y: rd((box.y - drawn.y) * scale) },
-	};
+	const at = (b) => ({ x: rd((b.x - drawn.x) * scale), y: rd((b.y - drawn.y) * scale) });
+	const out = { file: "preview.png", width, height, scale, offset: at(box) };
+	// En un set la imagen trae todas las variantes: dónde está cada una, para comparar cualquiera
+	if (root.type === "COMPONENT_SET") {
+		const variants = (root.children || [])
+			.filter((c) => c.type === "COMPONENT" && c.visible !== false && c.absoluteBoundingBox)
+			.map((c) => ({
+				when: parseVariantName(c.name),
+				offset: at(c.absoluteBoundingBox),
+				width: rd(c.absoluteBoundingBox.width * scale),
+				height: rd(c.absoluteBoundingBox.height * scale),
+			}));
+		if (variants.length > 1) out.variants = variants;
+	}
+	return out;
 }
 
 function buildRoot(root) {

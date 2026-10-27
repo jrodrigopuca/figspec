@@ -123,9 +123,21 @@ carpeta aparte):
 - [ ] **Visualizador, siguiente entrega (2b en adelante).**
   - Caja de Figma por capa (`figma-geometry.json`, clave por ruta de índices) y lista de capas
     desviadas más de 2 px respecto del render.
-  - Controles de variantes y props (fase 3): hoy se ve solo con los valores por defecto. Incluye
-    elegir un subcomponente (sin vista previa propia: "Ver en contexto").
-  - Vista previa por variante: requiere `figspec: 3` en el plugin (decidir en la fase 3).
+  - [x] Controles de variantes y props (fase 3, 2026-10-27): un control por prop (lista, casilla o
+    campo), Restablecer, selección y desplegado conservados por clave de capa; subcomponente
+    suelto con el tamaño y los valores de su primera instancia, y "Ver en contexto". En un set,
+    `meta.preview.variants` (extractor) da la posición de cada variante en la imagen y el
+    visualizador recorta la vista previa a la elegida (margen de 16 px); aviso si se cambian
+    textos u opciones, y solo Render si la imagen no tiene esa combinación. Validado en Chrome con
+    un set sintético de 8 variantes y vista previa real (render sobre Hover + L, diferencia limpia
+    salvo textos), el subcomponente extraído del menú (296 px, ícono y texto) y el arranque de las
+    25 salidas; 5 pruebas.
+  - Vista previa por variante para lo que no es un set (por ejemplo, una instancia con otro estado
+    o los textos cambiados): requiere `figspec: 3` en el plugin. _Decisión pendiente:_ si vale la
+    pena, ahora que un set ya muestra cada variante. Por defecto: no.
+  - _Idea del usuario (2026-10-27), a decidir:_ usar el visualizador para renombrar capas, definir
+    subcomponentes y agrupar componentes parecidos. Ver la propuesta y sus decisiones abiertas
+    abajo, en "Decisiones del visualizador como editor".
   - Inconsistencias clicables: `inconsistencies.md` no apunta a una capa concreta; hace falta la
     ruta o el id en los datos.
   - Pestañas de tokens, íconos, notas e inconsistencias (fase 4).
@@ -141,6 +153,20 @@ carpeta aparte):
     respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif), en
     el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
     una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
+  - _Decisiones del visualizador como editor (idea del usuario, 2026-10-27):_
+    1. Dónde vive lo decidido. El visualizador es un archivo estático: no puede volver a correr el
+       extractor ni escribir en Figma. Propuesta: exporta un archivo de decisiones
+       (`figspec-decisions.json`: nombres por id de nodo, subcomponentes, grupos) que el
+       extractor lee con `--decisions`; los nombres también se pueden llevar al plugin para que
+       queden en Figma. Por defecto: una sola fuente para los nombres (Figma, con el plugin) y el
+       archivo de decisiones solo para lo que el plugin no puede expresar.
+    2. Renombrar: lo más útil y lo más simple (se ve el nombre en contexto y la clase que
+       resulta). Requiere que cada capa lleve su id de Figma en component.json (hoy no).
+    3. Definir un subcomponente a partir de una capa: el extractor ya sabe extraer (los
+       repetidos); hace falta permitirlo para una capa elegida, sin repetición.
+    4. Agrupar componentes parecidos como uno (con variantes o props): lo más difícil; hay que
+       decidir qué hacer con las diferencias de estructura. Después de 2 y 3.
+    5. Se relaciona con "nombres que sobrevivan a copias nuevas del original" (pospuesto).
   - _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
     deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
     comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una

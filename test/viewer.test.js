@@ -402,3 +402,55 @@ test("inspector: tokens dentro de un valor", () => {
 	assert.deepEqual(client.valueParts("var(--a) var(--b, rgba(0, 0, 0, 0.5))"), [{ token: "--a", fallback: null }, " ", { token: "--b", fallback: "rgba(0, 0, 0, 0.5)" }]);
 	assert.deepEqual(client.valueParts("12px"), ["12px"]);
 });
+
+// ---------------------------------------------------------------- variantes y props
+test("controles: uno por prop según su tipo", () => {
+	card({});
+	const controls = client.propControls(cardData, cardData.spec.component);
+	assert.deepEqual(controls.map((c) => [c.name, c.control, c.options]), [
+		["state", "select", ["Default", "Hover", "Disabled", "Active"]],
+		["size", "select", ["S", "L"]],
+		["title", "text", undefined],
+		["showDot", "check", undefined],
+	]);
+	const icon = client.propControls({ ...cardData, assets: { "a/x.svg": { svg: "<svg/>" }, "a/y.png": { url: "" } } }, { name: "X", props: { icon: { type: "icon" }, slot: { type: "node" } } });
+	assert.deepEqual(icon.map((c) => [c.name, c.options, c.none]), [["icon", ["a/x.svg"], true], ["slot", ["Tag"], true]]);
+});
+
+test("vista previa de un set: cada variante en su lugar, recortada con margen", () => {
+	const data = JSON.parse(JSON.stringify(cardData));
+	data.spec.meta.preview = {
+		file: "preview.png", width: 560, height: 640, scale: 1, offset: { x: 20, y: 20 },
+		variants: [
+			{ when: { state: "Default", size: "S" }, offset: { x: 20, y: 20 }, width: 180, height: 120 },
+			{ when: { state: "Hover", size: "L" }, offset: { x: 300, y: 170 }, width: 240, height: 120 },
+		],
+	};
+	assert.deepEqual(client.previewFor(data, "Card", {}), { offset: { x: 20, y: 20 }, crop: { x: 4, y: 4, width: 212, height: 152 }, exact: true, reason: null });
+	assert.deepEqual(client.previewFor(data, "Card", { state: "Hover", size: "L" }).offset, { x: 300, y: 170 });
+	assert.equal(client.previewFor(data, "Card", { state: "Hover", size: "L" }).crop.width, 240 + 32);
+	assert.equal(client.previewFor(data, "Card", { state: "Active" }).reason, "variant", "la imagen no tiene esa combinación");
+	assert.deepEqual(client.previewFor(data, "Card", { title: "Otro" }), { offset: { x: 20, y: 20 }, crop: { x: 4, y: 4, width: 212, height: 152 }, exact: false, reason: "props" });
+	assert.equal(client.previewFor(data, "Tag", {}).reason, "component");
+});
+
+test("vista previa sin variantes: solo coincide con los valores por defecto", () => {
+	const data = JSON.parse(JSON.stringify(cardData));
+	data.spec.meta.preview = { file: "preview.png", width: 200, height: 120, scale: 1, offset: { x: 0, y: 0 } };
+	assert.equal(client.previewFor(data, "Card", {}).exact, true);
+	assert.equal(client.previewFor(data, "Card", {}).crop, null);
+	assert.equal(client.previewFor(data, "Card", { state: "Hover" }).reason, "variant");
+	assert.equal(client.previewFor(data, "Card", { showDot: false }).reason, "props");
+	delete data.spec.meta.preview;
+	assert.equal(client.previewFor(data, "Card", {}).reason, "none");
+});
+
+test("capas: la clave se conserva entre variantes (selección y desplegado)", () => {
+	const a = client.treeModel(client.renderTree(cardData, "Card", {}));
+	const b = client.treeModel(client.renderTree(cardData, "Card", { state: "Hover", size: "L" }));
+	assert.equal(a.find((l) => l.cls === "tag").key, "Card/tag");
+	assert.equal(b.find((l) => l.cls === "tag").key, "Card/tag");
+	assert.deepEqual(a.map((l) => l.key).filter((k) => !b.some((x) => x.key === k)), [], "todas las capas de S siguen en L");
+	const twins = client.treeModel({ tag: "div", attrs: {}, comp: "C", el: { className: "root" }, children: [1, 2].map(() => ({ tag: "div", attrs: {}, comp: "C", el: { className: "item" }, children: [] })) });
+	assert.deepEqual(twins.map((l) => l.key), ["C", "C/item", "C/item#1"]);
+});

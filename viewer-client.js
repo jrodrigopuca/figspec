@@ -306,7 +306,12 @@ function previewBox(preview) {
 function treeModel(root) {
 	const list = [];
 	(function walk(n, parent, depth, inside) {
-		const layer = { id: list.length, node: n, parent, children: [], depth, kind: layerKind(n), inside };
+		// key: ruta de clases desde la raíz (con el orden entre hermanos de la misma clase); sirve
+		// para conservar la selección y lo desplegado al cambiar de variante
+		const cls = n.instance ? n.instance.el.className : n.el.className;
+		const twin = parent ? parent.children.filter((c) => c.cls === cls).length : 0;
+		const key = parent ? `${parent.key}/${cls}${twin ? `#${twin}` : ""}` : `${n.comp}`;
+		const layer = { id: list.length, key, cls, node: n, parent, children: [], depth, kind: layerKind(n), inside };
 		list.push(layer);
 		if (parent) parent.children.push(layer);
 		const within = n.instance ? n.comp : inside;
@@ -363,6 +368,60 @@ function hitTest(items, point) {
 		if (best < 0 || it.depth >= items[best].depth) best = i;
 	});
 	return best;
+}
+
+// ---------------------------------------------------------------- props
+// Controles para las props de un componente: { name, type, control, options?, none? }
+//   control: "select" (variantes, íconos, componentes), "check" (booleanos) o "text"
+// Los íconos ofrecen los SVG de la salida; los intercambios de instancia, los subcomponentes.
+function propControls(data, comp) {
+	const icons = Object.keys(data.assets || {}).filter((f) => data.assets[f].svg).sort();
+	const subs = Object.keys(data.spec.subcomponents || {}).filter((n) => n !== comp.name);
+	const out = [];
+	for (const [name, def] of Object.entries(comp.props || {})) {
+		if (def.type === "variant")
+			out.push(def.options && def.options.length ? { name, type: def.type, control: "select", options: def.options.map(String) } : { name, type: def.type, control: "text" });
+		else if (def.type === "boolean") out.push({ name, type: def.type, control: "check" });
+		else if (def.type === "string") out.push({ name, type: def.type, control: "text" });
+		else if (def.type === "icon") out.push({ name, type: def.type, control: "select", options: icons, none: true });
+		else if (def.type === "node" || def.type === "slot") out.push({ name, type: def.type, control: "select", options: subs, none: true });
+	}
+	return out;
+}
+
+// Margen alrededor de una variante al recortar la imagen de un set (px de Figma): deja ver sombras
+const PREVIEW_MARGIN = 16;
+
+// Qué parte de la vista previa corresponde a lo que se dibuja:
+//   offset → dónde ubicar el render (píxeles de la imagen); null si la imagen no lo muestra
+//   crop   → en un set, la parte de la imagen con esa variante (más un margen para sombras);
+//            null = la imagen entera
+//   exact  → la imagen muestra exactamente estos valores (si no, la comparación es aproximada)
+//   reason → por qué no es exacta: "none" (sin vista previa), "component" (un subcomponente: no
+//            tiene vista previa propia), "variant" (la imagen no tiene esta variante) o "props"
+//            (textos u opciones distintos de los de Figma)
+function previewFor(data, compName, values) {
+	const p = data.spec.meta.preview;
+	const root = data.spec.component;
+	if (!p) return { offset: null, crop: null, exact: false, reason: "none" };
+	if (compName !== root.name) return { offset: null, crop: null, exact: false, reason: "component" };
+	const defaults = spec.propDefaults(root);
+	const v = { ...defaults };
+	for (const [k, x] of Object.entries(values || {})) if (x !== undefined) v[k] = x;
+	const variantProps = Object.keys(root.props || {}).filter((k) => root.props[k].type === "variant");
+	let offset = p.offset;
+	let crop = null;
+	if (p.variants) {
+		const match = p.variants.find((x) => variantProps.every((k) => x.when[k] === undefined || String(x.when[k]) === String(v[k])));
+		if (!match) return { offset: null, crop: null, exact: false, reason: "variant" };
+		offset = match.offset;
+		const m = PREVIEW_MARGIN * p.scale;
+		const x = Math.max(0, match.offset.x - m);
+		const y = Math.max(0, match.offset.y - m);
+		crop = { x, y, width: Math.min(p.width, match.offset.x + match.width + m) - x, height: Math.min(p.height, match.offset.y + match.height + m) - y };
+	} else if (variantProps.some((k) => String(v[k]) !== String(defaults[k]))) return { offset: null, crop: null, exact: false, reason: "variant" };
+	const changed = Object.keys(root.props || {}).some((k) => root.props[k].type !== "variant" && v[k] !== defaults[k]);
+	return { offset, crop, exact: !changed, reason: changed ? "props" : null };
 }
 
 // ---------------------------------------------------------------- inspector
@@ -498,45 +557,54 @@ function boot(doc, data) {
 
 	const design = data.spec;
 	const meta = design.meta;
-	let box = meta.preview ? previewBox(meta.preview) : { width: 0, height: 0 };
+	const rootName = design.component.name;
+	const subs = design.subcomponents || {};
+	const byName = (n) => (n === rootName ? design.component : subs[n]);
+	let box = { width: 1, height: 1 };
 	let zoom = 1;
 	let mode = null;
+	let preferred = null; // modo que eligió la persona (se vuelve a él cuando se puede comparar)
 	let opacity = 0.5;
+	// Qué se dibuja: un componente (la raíz o un subcomponente) con los valores elegidos
+	const view = { comp: rootName, values: {} };
+	let pv = previewFor(data, rootName, {});
 
 	// Escenario con dos paneles del mismo tamaño: la vista previa de Figma y el componente en su
 	// Shadow DOM, en la posición que indica meta.preview.offset (la imagen puede incluir sombras)
 	const stage = h("div", { class: "fv-stage" });
 	const figmaPane = h("div", { class: "fv-pane fv-pane-figma" });
 	const renderPane = h("div", { class: "fv-pane fv-pane-render" });
-	if (data.preview)
-		figmaPane.append(h("img", { class: "fv-preview", src: data.preview, alt: `Vista previa de ${design.component.figmaName} exportada desde Figma`, draggable: "false" }));
+	const previewImg = data.preview
+		? h("img", { class: "fv-preview", src: data.preview, alt: `Vista previa de ${design.component.figmaName} exportada desde Figma`, draggable: "false" })
+		: null;
+	if (previewImg) figmaPane.append(previewImg);
 	stage.append(figmaPane, renderPane);
 	const host = h("div", { class: "fv-render" });
-	if (meta.preview) {
-		host.style.left = `${meta.preview.offset.x / meta.preview.scale}px`;
-		host.style.top = `${meta.preview.offset.y / meta.preview.scale}px`;
-	}
 	const shadow = host.attachShadow({ mode: "open" });
 	const style = doc.createElement("style");
 	style.textContent = shadowCss(data);
 	shadow.append(style);
-	const nodes = new Map(); // elemento del render → nodo virtual
-	const tree = renderTree(data, design.component.name, {});
-	mount(doc, shadow, tree, nodes);
 	renderPane.append(host);
-	const hostX = meta.preview ? meta.preview.offset.x / meta.preview.scale : 0;
-	const hostY = meta.preview ? meta.preview.offset.y / meta.preview.scale : 0;
+	const nodes = new Map(); // elemento del render → nodo virtual
+	let tree = null;
+	let hostX = 0;
+	let hostY = 0;
 
 	// Capas: el árbol del panel izquierdo, con el elemento del render de cada una
-	const layers = treeModel(tree);
-	const elementOf = new Map();
-	for (const [el, n] of nodes) elementOf.set(n, el);
-	const layerOf = new Map(layers.map((l) => [l.node, l]));
+	let layers = [];
+	let elementOf = new Map();
 	let selected = null;
 	let hovered = null;
 	let code = stored(CODE_KEY) === "1";
-	const expanded = new Set(layers.filter((l) => l.kind !== "instance" && !l.inside).map((l) => l.id));
-	expanded.add(0);
+	// Desplegadas o plegadas por clave (sobrevive a los cambios de variante); por defecto se
+	// despliega todo menos las instancias
+	const openState = new Map();
+	const isOpen = (l) => (openState.has(l.key) ? openState.get(l.key) : l.kind !== "instance" && !l.inside);
+	// Un subcomponente suelto se dibuja como su primera instancia en la raíz: con su tamaño y con
+	// los valores que recibe ahí (un ítem extraído no tiene texto por defecto)
+	const instanceSize = {};
+	const instanceValues = {};
+	const baseValues = () => ({ ...(view.comp === rootName ? {} : instanceValues[view.comp] || {}) });
 
 	// Caja de una capa en coordenadas del panel (sin zoom); el render está en host
 	function rectOf(layer) {
@@ -552,13 +620,14 @@ function boot(doc, data) {
 	// que el lienzo se pueda desplazar con zoom alto
 	const sizer = h("div", { class: "fv-sizer" }, stage);
 	const canvas = h("section", { class: "fv-canvas", "aria-label": "Lienzo" }, sizer);
-	const noPreview = "Sin vista previa: exporta con el plugin con «Vista previa (PNG)» activado";
+	const NO_COMPARE = {
+		none: "Sin vista previa: exporta con el plugin con «Vista previa (PNG)» activado",
+		component: "Este componente no tiene vista previa propia: usa «Ver en contexto»",
+		variant: "La vista previa de Figma no incluye esta variante",
+	};
 	const modeButtons = {};
 	const modeBar = h("div", { class: "fv-modes", role: "group", "aria-label": "Qué se muestra" },
-		MODES.map((m) => {
-			const off = m.id !== "render" && !data.preview;
-			return (modeButtons[m.id] = h("button", { type: "button", title: off ? noPreview : m.title, disabled: off, onclick: () => setMode(m.id, true), text: m.label }));
-		}),
+		MODES.map((m) => (modeButtons[m.id] = h("button", { type: "button", title: m.title, onclick: () => setMode(m.id, true), text: m.label }))),
 	);
 
 	// Controles de cada modo, en una franja sobre el lienzo (no se escalan con el zoom)
@@ -586,7 +655,10 @@ function boot(doc, data) {
 		toolbar.replaceChildren(...modeTools[m]);
 		toolbar.hidden = !modeTools[m].length;
 		for (const [k, b] of Object.entries(modeButtons)) b.setAttribute("aria-pressed", String(k === m));
-		if (user) store(MODE_KEY, m);
+		if (user) {
+			preferred = m;
+			store(MODE_KEY, m);
+		}
 		// Lado a lado ocupa el doble: se vuelve a ajustar al cambiar de tamaño
 		if (before && before.width !== l.width) fit();
 		else if (before) setZoom(zoom);
@@ -653,7 +725,7 @@ function boot(doc, data) {
 	const treeBox = h("div", { class: "fv-tree", role: "tree", tabindex: "0", "aria-label": "Capas" });
 	const rowOf = new Map();
 	const visibleLayers = () => layers.filter((l) => {
-		for (let p = l.parent; p; p = p.parent) if (!expanded.has(p.id)) return false;
+		for (let p = l.parent; p; p = p.parent) if (!isOpen(p)) return false;
 		return true;
 	});
 	function drawTree() {
@@ -664,13 +736,13 @@ function boot(doc, data) {
 			const row = h("div", {
 				class: `fv-row${layer.inside ? " fv-inside" : ""}${layer === selected ? " fv-sel" : ""}${layer === hovered ? " fv-hover" : ""}`,
 				role: "treeitem", id: `fv-layer-${layer.id}`, "aria-level": String(layer.depth + 1), "aria-selected": String(layer === selected),
-				"aria-expanded": has ? String(expanded.has(layer.id)) : null,
+				"aria-expanded": has ? String(isOpen(layer)) : null,
 				style: `padding-left:${8 + layer.depth * 14}px`,
 				onclick: () => select(layer),
 				onmouseenter: () => hover(layer),
 				onmouseleave: () => hover(null),
 			},
-				h("span", { class: "fv-toggle", text: has ? (expanded.has(layer.id) ? "▾" : "▸") : "", onclick: (e) => { e.stopPropagation(); toggle(layer); } }),
+				h("span", { class: "fv-toggle", text: has ? (isOpen(layer) ? "▾" : "▸") : "", onclick: (e) => { e.stopPropagation(); toggle(layer); } }),
 				h("span", { class: `fv-kind fv-kind-${layer.kind}`, text: lab.icon }),
 				h("span", { class: "fv-name", text: lab.main }),
 				lab.sub && h("span", { class: "fv-sub", text: lab.sub }),
@@ -681,14 +753,13 @@ function boot(doc, data) {
 		}));
 		treeBox.setAttribute("aria-activedescendant", selected ? `fv-layer-${selected.id}` : "");
 	}
-	function toggle(layer, open = !expanded.has(layer.id)) {
-		if (open) expanded.add(layer.id);
-		else expanded.delete(layer.id);
+	function toggle(layer, open = !isOpen(layer)) {
+		openState.set(layer.key, open);
 		drawTree();
 	}
 	function select(layer) {
 		selected = layer;
-		for (let p = layer && layer.parent; p; p = p.parent) expanded.add(p.id);
+		for (let p = layer && layer.parent; p; p = p.parent) openState.set(p.key, true);
 		drawTree();
 		drawMarks();
 		showSelection();
@@ -713,10 +784,10 @@ function boot(doc, data) {
 		else if (e.key === "Home") next = vis[0];
 		else if (e.key === "End") next = vis[vis.length - 1];
 		else if (e.key === "ArrowRight" && selected) {
-			if (selected.children.length && !expanded.has(selected.id)) return e.preventDefault(), toggle(selected, true);
+			if (selected.children.length && !isOpen(selected)) return e.preventDefault(), toggle(selected, true);
 			next = selected.children[0];
 		} else if (e.key === "ArrowLeft" && selected) {
-			if (selected.children.length && expanded.has(selected.id)) return e.preventDefault(), toggle(selected, false);
+			if (selected.children.length && isOpen(selected)) return e.preventDefault(), toggle(selected, false);
 			next = selected.parent;
 		} else return;
 		e.preventDefault();
@@ -831,6 +902,121 @@ function boot(doc, data) {
 			showSelection();
 		}, text: "Código" });
 
+	// ---------------------------------------------------------------- variantes y props
+	// Franja sobre el lienzo: qué componente se dibuja y con qué valores. Los valores cambiados
+	// se guardan en view.values (lo demás toma el valor por defecto, como en React).
+	const propsBar = h("div", { class: "fv-props", role: "group", "aria-label": "Variantes y props" });
+	const previewNote = h("div", { class: "fv-props-note", role: "status" });
+	const compSelect = h("select", { "aria-label": "Componente", onchange: (e) => showComponent(e.target.value) },
+		[rootName, ...Object.keys(subs)].map((n) => h("option", { value: n, text: n === rootName ? n : `${n} (subcomponente)` })));
+	const fieldsBox = h("div", { class: "fv-fields" });
+	const resetBtn = h("button", { type: "button", class: "fv-reset", text: "Restablecer", title: "Volver a los valores de Figma", hidden: true,
+		onclick: () => { view.values = baseValues(); buildFields(); renderNow(); } });
+	propsBar.append(h("label", { class: "fv-field" }, h("span", { text: "Componente" }), compSelect), fieldsBox, previewNote);
+	const effective = () => {
+		const v = { ...spec.propDefaults(byName(view.comp)) };
+		for (const [k, x] of Object.entries(view.values)) if (x !== undefined) v[k] = x;
+		return v;
+	};
+	const setValue = (name, value) => {
+		view.values[name] = value;
+		renderNow();
+	};
+	function buildFields() {
+		const comp = byName(view.comp);
+		const v = effective();
+		const controls = propControls(data, comp);
+		const fields = controls.map((c) => {
+			const id = `fv-prop-${c.name}`;
+			let input;
+			if (c.control === "check") input = h("input", { type: "checkbox", id, checked: v[c.name] === true, onchange: (e) => setValue(c.name, e.target.checked) });
+			else if (c.control === "text") input = h("input", { type: "text", id, value: v[c.name] == null ? "" : String(v[c.name]), oninput: (e) => setValue(c.name, e.target.value) });
+			else {
+				const label = (o) => (c.type === "icon" ? o.split("/").pop().replace(/\.svg$/, "") : o);
+				input = h("select", { id, onchange: (e) => setValue(c.name, e.target.value === "" && c.none ? null : e.target.value) },
+					c.none && h("option", { value: "", text: "(ninguno)" }),
+					c.options.map((o) => h("option", { value: o, text: label(o) })));
+				input.value = v[c.name] == null ? "" : String(v[c.name]);
+			}
+			return h("label", { class: "fv-field", for: id }, h("span", { text: c.name }), input);
+		});
+		fieldsBox.replaceChildren(...(fields.length ? fields : [h("span", { class: "fv-hint", text: "Sin props" })]), resetBtn);
+		// Sin props ni subcomponentes no hay nada que elegir: la franja no aparece
+		propsBar.hidden = !fields.length && !Object.keys(subs).length;
+	}
+	function showPreviewNote() {
+		const msg = {
+			props: "Cambiaste textos u opciones: la vista previa de Figma sigue mostrando los originales.",
+			variant: NO_COMPARE.variant + ": solo se puede ver el render.",
+			component: `Este componente no tiene vista previa propia; se muestra con los valores de su primera instancia en ${rootName}.`,
+		}[pv.reason];
+		previewNote.replaceChildren(...(msg ? [h("span", { text: msg }),
+			pv.reason === "component" && data.preview && h("button", { type: "button", text: "Ver en contexto", title: `Vuelve a ${rootName} y elige la primera instancia de ${view.comp}`, onclick: () => showComponent(rootName, view.comp) })] : []).filter(Boolean));
+		previewNote.hidden = !msg;
+	}
+	// Cambia el componente que se dibuja; con focus, elige su primera instancia (Ver en contexto)
+	function showComponent(name, focus) {
+		view.comp = name;
+		view.values = baseValues();
+		compSelect.value = name;
+		selected = null;
+		buildFields();
+		renderNow({ refit: true });
+		if (focus) {
+			const layer = layers.find((l) => l.node.instance && l.node.comp === focus);
+			if (layer) select(layer);
+		}
+	}
+
+	// Dibuja el componente con los valores actuales y actualiza todo lo que depende del render
+	function renderNow({ refit = false } = {}) {
+		const keep = selected && selected.key;
+		pv = previewFor(data, view.comp, view.values);
+		const compare = !!(data.preview && pv.offset);
+		const scale = meta.preview ? meta.preview.scale : 1;
+		// La parte de la imagen que se muestra (en un set, la variante elegida) y el render encima
+		const crop = compare ? pv.crop || { x: 0, y: 0, width: meta.preview.width, height: meta.preview.height } : null;
+		hostX = compare ? (pv.offset.x - crop.x) / scale : 0;
+		hostY = compare ? (pv.offset.y - crop.y) / scale : 0;
+		host.style.left = `${hostX}px`;
+		host.style.top = `${hostY}px`;
+		if (previewImg && crop) {
+			const full = previewBox(meta.preview);
+			Object.assign(previewImg.style, { left: `${-crop.x / scale}px`, top: `${-crop.y / scale}px`, width: `${full.width}px`, height: `${full.height}px` });
+		}
+		// Un subcomponente suelto toma el tamaño de su instancia en la raíz (su CSS puede ser
+		// width: 100%); la raíz, el de la parte visible de la vista previa
+		const hint = compare ? { width: crop.width / scale, height: crop.height / scale } : instanceSize[view.comp] || { width: 320, height: 1 };
+		// El ancho lo da el padre (p. ej. align-self: stretch): suelto, se fija el de la instancia
+		host.style.width = !compare && instanceSize[view.comp] ? `${instanceSize[view.comp].width}px` : "";
+		renderPane.style.width = `${hint.width}px`;
+		renderPane.style.height = `${hint.height}px`;
+		tree = renderTree(data, view.comp, view.values);
+		nodes.clear();
+		shadow.replaceChildren(style);
+		mount(doc, shadow, tree, nodes);
+		elementOf = new Map();
+		for (const [el, n] of nodes) elementOf.set(n, el);
+		layers = treeModel(tree);
+		const old = box;
+		box = { width: Math.max(1, hint.width, hostX + host.offsetWidth), height: Math.max(1, hint.height, hostY + host.offsetHeight) };
+		figmaPane.hidden = !compare;
+		for (const m of MODES) {
+			const off = m.id !== "render" && !compare;
+			modeButtons[m.id].disabled = off;
+			modeButtons[m.id].title = off ? NO_COMPARE[pv.reason] || NO_COMPARE.none : m.title;
+		}
+		selected = keep ? layers.find((l) => l.key === keep) || null : null;
+		hovered = null;
+		setMode(compare ? preferred : "render");
+		if (refit || old.width !== box.width || old.height !== box.height) fit();
+		else setZoom(zoom);
+		resetBtn.hidden = JSON.stringify(view.values) === JSON.stringify(baseValues());
+		drawTree();
+		showSelection();
+		showPreviewNote();
+	}
+
 	const notices = [];
 	const fonts = missingFonts(doc, Object.values(data.css || {}));
 	if (fonts.length)
@@ -857,7 +1043,7 @@ function boot(doc, data) {
 				h("h2", { text: "Capas" }),
 				treeBox,
 			),
-			h("div", { class: "fv-center" }, toolbar, canvas),
+			h("div", { class: "fv-center" }, toolbar, propsBar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
 				h("h2", { text: "Inspector" }),
 				selectionBox,
@@ -885,7 +1071,8 @@ function boot(doc, data) {
 	});
 	doc.defaultView && doc.defaultView.addEventListener("blur", stopBlink);
 	doc.addEventListener("keydown", (e) => {
-		if (e.key === " " && mode === "overlay" && !(e.target && e.target.closest && e.target.closest("button"))) {
+		const typing = e.target && e.target.closest && e.target.closest("input, select, textarea, button");
+		if (e.key === " " && mode === "overlay" && !typing) {
 			e.preventDefault();
 			if (e.repeat || blink) return;
 			let on = false;
@@ -897,7 +1084,7 @@ function boot(doc, data) {
 			return;
 		}
 		// Esc sube al contenedor de la capa elegida
-		if (e.key === "Escape" && selected) {
+		if (e.key === "Escape" && selected && !(typing && typing.matches("input[type=text], select"))) {
 			e.preventDefault();
 			select(selected.parent);
 			return;
@@ -908,13 +1095,19 @@ function boot(doc, data) {
 		else return;
 		e.preventDefault();
 	});
-	// Sin vista previa, el escenario toma el tamaño del componente dibujado
-	if (!meta.preview) box = { width: Math.max(1, host.offsetWidth), height: Math.max(1, host.offsetHeight) };
-	drawTree();
-	showSelection();
-	setMode(initialMode(stored(MODE_KEY), !!data.preview));
-	fit();
+	preferred = initialMode(stored(MODE_KEY), !!data.preview);
+	buildFields();
+	renderNow({ refit: true });
+	// Tamaño de cada subcomponente en contexto (su primera instancia en la raíz), para dibujarlo suelto
+	for (const l of layers) {
+		const n = l.node;
+		if (!n.instance || instanceSize[n.comp]) continue;
+		const r = rectOf(l);
+		if (r && r.width > 0) instanceSize[n.comp] = { width: r.width, height: r.height };
+		instanceValues[n.comp] = {};
+		for (const k of Object.keys((subs[n.comp] || {}).props || {})) if (n.values[k] !== undefined) instanceValues[n.comp][k] = n.values[k];
+	}
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

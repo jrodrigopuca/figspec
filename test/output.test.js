@@ -277,7 +277,12 @@ test("meta.preview: en un set, la posición de la variante por defecto dentro de
 		children: [variant("State=Default", 20), variant("State=Hover", 140)],
 	};
 	const r = extract(pluginBundle(set, fakePng(520, 160)));
-	assert.deepEqual(r.spec.meta.preview, { file: "preview.png", width: 520, height: 160, scale: 2, offset: { x: 280, y: 40 } }, "variante Hover en x=140 y=20, imagen @2x");
+	const { variants, ...preview } = r.spec.meta.preview;
+	assert.deepEqual(preview, { file: "preview.png", width: 520, height: 160, scale: 2, offset: { x: 280, y: 40 } }, "variante Hover en x=140 y=20, imagen @2x");
+	assert.deepEqual(variants, [
+		{ when: { state: "Default" }, offset: { x: 40, y: 40 }, width: 200, height: 80 },
+		{ when: { state: "Hover" }, offset: { x: 280, y: 40 }, width: 200, height: 80 },
+	], "cada variante con su posición y tamaño en la imagen");
 });
 
 test("meta.preview: con --no-png no se incluye", () => {

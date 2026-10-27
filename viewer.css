@@ -78,6 +78,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-modebar label { display: inline-flex; align-items: center; gap: 6px; }
 .fv-modebar output { min-width: 40px; font-variant-numeric: tabular-nums; }
 .fv-hint { color: var(--fv-muted); }
+.fv-props { display: flex; align-items: flex-end; gap: 10px 14px; flex-wrap: wrap; padding: 8px 12px; background: var(--fv-panel); border-bottom: 1px solid var(--fv-line); }
+.fv-fields { display: contents; }
+.fv-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--fv-muted); }
+.fv-field select, .fv-field input[type="text"] { font: inherit; font-size: 13px; color: var(--fv-text); background: var(--fv-bg); border: 1px solid var(--fv-line); border-radius: 6px; padding: 3px 6px; min-width: 90px; max-width: 220px; }
+.fv-field input[type="checkbox"] { width: 16px; height: 16px; margin: 4px 0; accent-color: var(--fv-accent); }
+.fv-props-note { flex-basis: 100%; display: flex; align-items: center; gap: 10px; color: var(--fv-warn-text); background: var(--fv-warn-bg); border-radius: 6px; padding: 4px 8px; }
+.fv-props[hidden], .fv-props-note[hidden], .fv-reset[hidden] { display: none; }
 .fv-side { background: var(--fv-panel); padding: 12px; overflow: auto; }
 .fv-side:first-child { border-right: 1px solid var(--fv-line); }
 .fv-side:last-child { border-left: 1px solid var(--fv-line); }
@@ -97,7 +104,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .fv-sizer { position: relative; flex: none; margin: auto; border: 32px solid transparent; box-sizing: content-box; }
 .fv-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
-.fv-preview { display: block; width: 100%; height: 100%; image-rendering: auto; user-select: none; }
+.fv-pane-figma { overflow: hidden; }
+.fv-preview { position: absolute; left: 0; top: 0; display: block; max-width: none; user-select: none; }
 .fv-pane { position: absolute; top: 0; left: 0; }
 .fv-pane[hidden] { display: none; }
 .fv-render { position: absolute; left: 0; top: 0; }
