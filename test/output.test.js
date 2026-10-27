@@ -176,3 +176,31 @@ test("aria: los ítems extraídos con estados automáticos (active, disabled) lo
 	assert.match(tsx, /aria-current=\{state === "active" \? "true" : undefined\}/);
 	assert.match(tsx, /aria-disabled=\{state === "disabled" \|\| undefined\}/);
 });
+
+// ---------------------------------------------------------------- listas (items.map)
+test("items.map: los ítems extraídos se renderizan desde una prop con los datos de Figma", () => {
+	const item = (s) => F("Tab", "HORIZONTAL", [T(s)]);
+	const r = extract(F("Tabs", "HORIZONTAL", [item("Todos"), item("Activos"), item("Archivados")]), ["--extract-repeated", "--react"]);
+	const tsx = fs.readFileSync(path.join(r.out, "Tabs", "Tabs.tsx"), "utf8");
+	assert.match(tsx, /import \{ Tab, type TabProps \} from "\.\/Tab";/);
+	assert.match(tsx, /tabs\?: TabProps\[\];/);
+	assert.match(tsx, /const defaultTabs: TabProps\[\] = \[\n {2}\{ label: "Todos" \},\n {2}\{ label: "Activos" \},\n {2}\{ label: "Archivados" \},\n\];/);
+	assert.match(tsx, /function Tabs\(\{ tabs = defaultTabs, className \}/);
+	assert.match(tsx, /\{tabs\.map\(\(item\) => \(\n\s+<Tab key=\{item\.label\} className=\{styles\.item\} \{\.\.\.item\} \/>/);
+});
+
+test("items.map: con labels repetidos la key es el índice", () => {
+	const item = (s, extra = {}) => F("Row", "HORIZONTAL", [T(s)], extra);
+	const r = extract(F("List", "VERTICAL", [item("Igual"), item("Igual", { opacity: 0.4 }), item("Otro")]), ["--extract-repeated", "--react"]);
+	const tsx = fs.readFileSync(path.join(r.out, "List", "List.tsx"), "utf8");
+	assert.match(tsx, /rows\.map\(\(item, i\) => \(\n\s+<Row key=\{i\}/);
+});
+
+test("items.map: ítems intercalados con otros elementos quedan como instancias explícitas", () => {
+	const item = (s) => F("Tab", "HORIZONTAL", [T(s)]);
+	const r = extract(F("Tabs", "HORIZONTAL", [item("A1"), F("Divider", "NONE", [T("|")]), item("B1"), item("C1")]), ["--extract-repeated", "--react"]);
+	const tsx = fs.readFileSync(path.join(r.out, "Tabs", "Tabs.tsx"), "utf8");
+	// Un divisor entre medio: una lista cubriría solo una parte, así que todas quedan explícitas
+	for (const l of ["A1", "B1", "C1"]) assert.match(tsx, new RegExp(`<Tab className=\\{styles\\.item\\} label="${l}" \\/>`));
+	assert.doesNotMatch(tsx, /\.map\(/);
+});

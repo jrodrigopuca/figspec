@@ -109,6 +109,7 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 ```
 
 - Lo que cambia entre ítems es una prop: el texto → `label` (`label2`…), el ícono → `icon` (recibe el componente del ícono), la visibilidad → un booleano.
+- Con `--react`, los ítems se renderizan con `.map` sobre una prop del padre que trae los datos de Figma por defecto, así puedes pasar los tuyos: `<SideMenu navItems={[{ label: "Inicio", state: "active", icon: Icons.Home }]} />`. La `key` es el `label` si es único; si no, el índice. Si los ítems están intercalados con otros elementos, quedan como instancias explícitas.
 - Cada grupo de estilos distinto es un estado (`state`): `default` es el grupo más numeroso, `disabled` el de menor opacidad, `active` un único ítem con otro fondo; si un nombre se repite se numera (`disabled2`). Si dos ítems difieren por una inconsistencia del diseño (p. ej. otra tipografía), aparece como un estado más: revisa `repeated` en `component.json`. Los nombres se pueden cambiar en la ventana del plugin (también el de por defecto: si lo llamas `normal`, los parecidos pasan a `normal2`…).
 - El subcomponente se llama como los ítems si el diseñador les puso nombre ("Tab" → `Tab`); si no, como su contenedor + `Item` (`nav` → `NavItem`) o, si el contenedor también tiene un nombre genérico, `<Componente>Item`.
 - Por ahora solo en componentes sin variantes (en los demás, los repetidos se reportan pero no se extraen).

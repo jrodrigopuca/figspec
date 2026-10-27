@@ -54,6 +54,7 @@ function componentModule(comp, env) {
 		icons: false,
 		reactNode: false,
 		iconType: false,
+		lists: new Map(), // ítems extraídos renderizados con .map: prop → { sub, items }
 	};
 	for (const [p, def] of Object.entries(comp.props || {}))
 		// Una prop de ícono es un componente: en JSX su variable va en mayúscula (<Icon />)
@@ -75,6 +76,14 @@ function componentModule(comp, env) {
 	const typeLines = Object.entries(comp.props || {}).map(
 		([p, def]) => `  ${IDENT.test(p) ? p : JSON.stringify(p)}?: ${tsType(def, g)};`,
 	);
+	// Listas de ítems: una prop con los datos de Figma como valor por defecto
+	const consts = [];
+	for (const [prop, { sub, items, constName }] of g.lists) {
+		typeLines.push(`  ${prop}?: ${sub}Props[];`);
+		consts.push(
+			`const ${constName}: ${sub}Props[] = [\n${items.map((o) => `  ${o},`).join("\n")}\n];\n`,
+		);
+	}
 	typeLines.push("  className?: string;");
 	const params = Object.keys(comp.props || {})
 		.filter((p) => g.used.has(p))
@@ -83,6 +92,7 @@ function componentModule(comp, env) {
 			const head = v === p ? p : `${IDENT.test(p) ? p : JSON.stringify(p)}: ${v}`;
 			return defaults[p] !== undefined ? `${head} = ${defaults[p]}` : head;
 		});
+	for (const [prop, { constName }] of g.lists) params.push(`${prop} = ${constName}`);
 	params.push("className");
 
 	const imports = [];
@@ -90,8 +100,11 @@ function componentModule(comp, env) {
 	if (types.some(Boolean))
 		imports.push(`import type { ${types.filter(Boolean).join(", ")} } from "react";`);
 	imports.push(`import styles from "./${comp.name}.module.css";`);
+	const listTypes = new Set([...g.lists.values()].map((l) => l.sub));
 	for (const c of [...g.components].sort())
-		imports.push(`import { ${c} } from "./${c}";`);
+		imports.push(
+			`import { ${c}${listTypes.has(c) ? `, type ${c}Props` : ""} } from "./${c}";`,
+		);
 	if (g.icons) imports.push('import * as Icons from "./icons";');
 	for (const [file, v] of g.images) imports.push(`import ${v} from "./${file}";`);
 
@@ -99,6 +112,7 @@ function componentModule(comp, env) {
 		`// Generado por figspec desde Figma ("${comp.figmaName}"). Los cambios manuales se pierden al regenerar.\n` +
 		`${imports.join("\n")}\n\n` +
 		`export type ${comp.name}Props = {\n${typeLines.join("\n")}\n};\n\n` +
+		(consts.length ? `// Datos de los ítems tal como están en Figma; reemplázalos con la prop\n${consts.join("\n")}\n` : "") +
 		`export function ${comp.name}({ ${params.join(", ")} }: ${comp.name}Props) {\n` +
 		branches.join("") +
 		`  return (\n${main}\n  );\n}\n`
@@ -205,7 +219,14 @@ function renderBox(el, g, n, isRoot) {
 		if (line.length <= 100) return line;
 	}
 	if (text) kids.push(...text.map((t) => pad(n + 2) + t));
-	for (const c of el.children || []) kids.push(renderEl(c, g, n + 2, false));
+	const children = el.children || [];
+	for (let i = 0; i < children.length; i++) {
+		const run = extractedRun(children, i, g);
+		if (run) {
+			kids.push(renderList(run, g, n + 2));
+			i += run.length - 1;
+		} else kids.push(renderEl(children[i], g, n + 2, false));
+	}
 	if (!kids.length) return `${pad(n)}${open} />`;
 	return `${pad(n)}${open}>\n${kids.join("\n")}\n${pad(n)}</${tag}>`;
 }
@@ -224,6 +245,51 @@ function textContent(el, g) {
 		);
 	if (el.text !== undefined && el.text !== "") return [literal(el.text)];
 	return null;
+}
+
+// ---------------------------------------------------------------- listas de ítems extraídos
+// Instancias seguidas de un mismo subcomponente extraído (--extract-repeated) con la misma clase de
+// ubicación: se renderizan con .map sobre un array de datos. Si están intercaladas con otros
+// elementos o cada una tiene su propia ubicación, se dejan como instancias explícitas.
+function extractedRun(children, i, g) {
+	const first = children[i];
+	const sub = first.component && g.env.subs[first.component];
+	if (!sub || !sub.extractedFrom || (first.bind && (first.bind.visible || first.bind.swap))) return null;
+	const same = (c) => c.component === first.component && c.className === first.className && !c.bind;
+	let j = i;
+	while (j < children.length && same(children[j])) j++;
+	// Todo el grupo tiene que estar junto: si hay otro ítem del mismo grupo más adelante, la prop
+	// de la lista cubriría solo una parte, así que quedan todos como instancias explícitas
+	if (children.slice(j).some(same) || children.slice(0, i).some(same)) return null;
+	return j - i >= 2 ? children.slice(i, j) : null;
+}
+
+function renderList(run, g, n) {
+	const first = run[0];
+	g.components.add(first.component);
+	const defs = (g.env.subs[first.component] || {}).props || {};
+	// Una prop por lista, con el nombre del subcomponente: NavItem → navItems
+	const base = `${camelSafe(first.component)}s`;
+	let prop = base;
+	for (let k = 2; g.lists.has(prop) || (g.comp.props || {})[prop]; k++) prop = `${base}${k}`;
+	const items = run.map((el) => {
+		const fields = [];
+		for (const [k, v] of Object.entries(el.props || {})) {
+			const val = propValue(v, (defs[k] || {}).type, g);
+			if (val !== null) fields.push(`${IDENT.test(k) ? k : JSON.stringify(k)}: ${val}`);
+		}
+		return `{ ${fields.join(", ")} }`;
+	});
+	g.lists.set(prop, { sub: first.component, items, constName: `default${prop[0].toUpperCase()}${prop.slice(1)}` });
+	// key: el label si todos lo tienen y es único; si no, el índice
+	const labels = run.map((el) => (el.props || {}).label);
+	const byLabel = labels.every((l) => typeof l === "string") && new Set(labels).size === labels.length;
+	const cls = classAttr(first, g, false);
+	return (
+		`${pad(n)}{${prop}.map((item${byLabel ? "" : ", i"}) => (\n` +
+		`${pad(n + 2)}<${first.component} key={${byLabel ? "item.label" : "i"}}${cls ? " " + cls : ""} {...item} />\n` +
+		`${pad(n)}))}`
+	);
 }
 
 function renderInstance(el, g, n) {

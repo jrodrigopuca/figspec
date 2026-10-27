@@ -23,8 +23,41 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
 - [ ] Elementos rotados (el plugin agrega `size`/`relativeTransform`).
 - [ ] `setPluginData` en capas dentro de instancias (si falla, ese nombre no se recuerda).
 - [ ] Ubicar con ⌖ sin que cambie la selección.
+- [ ] Ventana del plugin en Figma: tema oscuro real (los nombres de las variables `--figma-color-*`
+  salieron de memoria; tienen valor de respaldo), sección Estados, teclado y "Usar esta selección".
+- [ ] Exportar con el plugin un component set (raíz con variantes) y un componente que use
+  instancias de otros componentes (subcomponentes con variantes, swaps).
+- [ ] La descarga desde la ventana en otras versiones de Figma (si falla, "Copiar JSON").
 - [x] Imágenes de relleno: `imageRef` ↔ `getImageByHash` coinciden (pantalla de login real, JPEG
   1920×1080 → `.jpg` detectado por contenido, `<img>` en el componente, captura igual a Figma).
+
+**Probar en un proyecto React real** (hasta ahora: `tsc --strict`, esbuild y render con React en una
+carpeta aparte):
+- [ ] Integrar la salida en un proyecto Vite o Next: CSS Modules, importación de SVG/imágenes,
+  `tokens.css` global, `index.ts`.
+- [ ] Rendimiento con diseños grandes (el paquete del login pesa 3,1 MB por la imagen en base64).
+
+**Decisiones abiertas** (cada una tiene un valor por defecto hoy; confirmar o cambiar):
+- [ ] `aria-current="true"` (genérico) o `"page"` (menús): hoy `"true"` con una nota.
+- [ ] Etiquetas HTML: todo se genera como `div`/`span`; un ítem clicable o deshabilitado debería ser
+  `button` o `a` (con `disabled` real). ¿Inferir el elemento o dejarlo al desarrollador?
+- [ ] Una capa llamada exactamente "Icon" (o "ic", "SVG", "Shape") se trata como nombre genérico y se
+  renombra con el texto vecino (`logsIcon`). ¿Respetarla como nombre del diseñador?
+- [ ] Nombres que sobrevivan a una copia nueva del archivo original: hoy viven en el archivo de
+  Figma (`setPluginData`); alternativa, un archivo de nombres en el repo que lea el extractor.
+- [ ] Devolver los nombres al diseñador: descartado "aplicar en las capas de Figma"; alternativa de
+  ux-ui, un botón "Copiar lista de renombres" (Frame 5 → benefitsItem…) para comentarios o Slack.
+- [ ] `--extract-repeated` es opcional: ¿activarlo por defecto? (riesgo: secciones con la misma
+  estructura que no son una lista).
+- [ ] Inconsistencias del diseño (p. ej. "Pack" y "Logs" con Roboto 500 · 14px en el menú): hoy
+  salen como estados extra (`disabled2`, `default2`) y en `repeated`. ¿Reportarlas aparte para
+  avisarle al diseñador?
+- [ ] Publicación: nombre `figspec` libre en npm; el plugin necesitaría el `id` que asigna Figma al
+  publicarlo (los datos guardados con `setPluginData` dependen de ese id).
+- [ ] Titular de la licencia MIT: hoy `jrodrigopuca`; ¿nombre completo?
+- [ ] Autor de los commits: `jarp <jarp@outlook.com>` (config global de git); si ese correo no está
+  en la cuenta de GitHub, los commits no se vinculan al perfil.
+- [ ] `.gitignore` conserva `.figspec-cache/` de la versión con API: se puede quitar.
 
 **Funcionalidad**
 - [x] `aria-current` / `aria-disabled` deducidos del nombre del estado: palabra `active`/`current`/
@@ -32,7 +65,11 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
   "inactive" no cuenta, "legacyDisabled" sí). En sets de Figma (`State=Disabled`) y en ítems
   extraídos, con los nombres elegidos en el plugin. Campo `aria` en `component.json`; nota que
   sugiere `aria-current="page"` en menús. Verificado con el menú real (estados renombrados) y render.
-- [ ] `items.map(...)` con un array de datos en lugar de instancias explícitas.
+- [x] `items.map(...)`: con `--react`, los ítems extraídos se renderizan con `.map` sobre una prop
+  del padre (`navItems?: NavItemProps[]`) cuyos datos por defecto son los de Figma
+  (`defaultNavItems`). `key` = `label` si es único, si no el índice. Solo si todo el grupo está
+  junto y comparte la clase de ubicación; si no, instancias explícitas. Verificado: el HTML del menú
+  real es idéntico al de las instancias explícitas, y con datos propios renderiza bien (incluye aria).
 - [ ] Extraer repetidos en componentes con variantes (hoy solo se reportan).
 
 **Límites conocidos**
@@ -276,9 +313,8 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
   inconsistencias del diseño: "Pack" y "Logs" usan Roboto 500 · 14px en vez de Geist 700 · 12px);
   captura en Chrome igual a la `preview.png`; `tsc --strict` sobre el menú, 7 JSON de prueba y 7
   casos genéricos; 21 pruebas en `test/naming.test.js`. Sin la opción, la salida no cambia.
-  _Pendiente:_ extraer en componentes con variantes; generar `items.map(...)` con un array de datos
-  en lugar de instancias explícitas. (Hechos: nombrar estados desde el plugin, paso 3b; `aria-*`
-  según el nombre del estado, ver "En mira".)
+  _Pendiente:_ extraer en componentes con variantes. (Hechos: nombrar estados desde el plugin,
+  paso 3b; `aria-*` según el nombre del estado e `items.map(...)`, ver "En mira".)
 
 ## P3
 
