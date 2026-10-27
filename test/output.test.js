@@ -315,3 +315,20 @@ test("geometría: la caja de Figma de cada capa, relativa a la raíz de su varia
 	const files = JSON.parse(fs.readFileSync(path.join(r.out, ".figspec-manifest.json"), "utf8")).files;
 	assert.ok(files.includes("figma-geometry.json"), "registrado en el manifiesto");
 });
+
+// ---------------------------------------------------------------- alto de textos redondeado por Figma
+test("textos con interlineado decimal: el alto que redondea Figma queda como min-height", () => {
+	const t = (name, lh, h, extra = {}) => ({ ...T(name, { lineHeightPx: lh, lineHeightUnit: "PIXELS", textAutoResize: "HEIGHT", ...extra }), absoluteBoundingBox: box(60, h) });
+	const r = extract(F("Stats", "VERTICAL", [
+		t("Número", 12.019, 13), // una línea: 12,02 → 13
+		t("Título", 14.69, 30), // dos líneas: 29,38 → 30
+		t("Entero", 16, 16), // sin decimales: nada
+		t("Alto fijo", 12.019, 13, { textAutoResize: "NONE" }), // caja de alto fijo: ya lleva height
+		{ ...T("Normal", { textAutoResize: "HEIGHT", lineHeightUnit: "INTRINSIC_%", lineHeightPx: 14.52 }), absoluteBoundingBox: box(60, 15) },
+	]));
+	assert.equal(r.css("Número")["min-height"], "13px");
+	assert.equal(r.css("Título")["min-height"], "30px");
+	assert.equal(r.css("Entero")["min-height"], undefined);
+	assert.equal(r.css("Alto fijo")["min-height"], undefined);
+	assert.equal(r.css("Normal")["min-height"], undefined, "con interlineado normal el alto depende de la fuente");
+});

@@ -98,12 +98,14 @@ carpeta aparte):
   demás), más el rol; sin textos, el rol solo. Componentes: `Componente2`, con aviso. Validado:
   "Achievements" da `membersRow`, `clubsRow`, `eventBookingsRow`, `paymentsRow`; las otras 28
   salidas no cambian; 5 pruebas genéricas y paridad con el plugin.
-- [ ] **Altura de textos redondeada por Figma** (encontrado con la lista de desvíos en
-  "Achievements"). Figma redondea hacia arriba la caja de los textos con interlineado decimal
-  (12,02 → 13 px, 8,01 → 9 px); el CSS solo da el interlineado, y en ese componente se acumula
-  hasta 4 px de alto y corre la segunda fila 3 px. Propuesta: si la caja de Figma supera el
-  interlineado × líneas por menos de 1 px, `min-height` con la altura de Figma. Validar que baje la
-  lista de desvíos y que no cambien los casos sin decimales.
+- [x] **Altura de textos redondeada por Figma** (2026-10-27, encontrado con la lista de desvíos
+  en "Achievements"). Figma redondea hacia arriba la caja de los textos con interlineado decimal
+  (12,02 → 13 px, 8,01 → 9 px); el CSS solo daba el interlineado y en ese componente se acumulaban
+  4 px de alto y la segunda fila se corría 3 px. Ahora, en textos de alto automático con
+  interlineado fijo (px, token o % del tamaño), si la caja supera interlineado × líneas por menos
+  de 1 px se emite `min-height` con la altura de Figma (el texto igual crece si la fuente cambia);
+  con interlineado "normal" no (depende de la fuente). Validado: "Achievements" pasa de 6 desvíos
+  a ninguno; las otras 14 salidas no cambian; React sigue igual al visualizador; 1 prueba.
 - [ ] **Flujo de trabajo sin escribir en Figma** (acordado con el usuario el 2026-10-27, con
   ux-ui y architect). Objetivo: el plugin no deja ningún rastro en el archivo de Figma (ni
   `setPluginData`: llena el historial de versiones y genera ruido a UX/UI) y los nombres viven en

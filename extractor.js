@@ -1582,6 +1582,16 @@ function textCss(node, el) {
 		}[s.textAlignHorizontal];
 	}
 	if (s.textAutoResize === "WIDTH_AND_HEIGHT") css["white-space"] = "nowrap";
+	// Figma redondea hacia arriba la caja de un texto con interlineado decimal (12,02 → 13 px): en
+	// CSS el alto sale solo del interlineado y la diferencia se acumula en el contenedor. Si la caja
+	// supera interlineado × líneas por menos de 1 px, se conserva como alto mínimo (si la fuente
+	// cambia, el texto igual crece). Con interlineado "normal" el alto depende de la fuente: no.
+	const box = layoutBox(node);
+	if (!fixedTextHeight(node) && box && css["line-height"] !== "normal" && s.lineHeightPx > 0) {
+		const lines = Math.max(1, Math.round(box.height / s.lineHeightPx));
+		const extra = box.height - lines * s.lineHeightPx;
+		if (extra > 0.01 && extra < 1) css["min-height"] = px(box.height);
+	}
 	// Alineación vertical dentro de una caja de alto fijo (en CSS el texto queda arriba)
 	const valign = { CENTER: "center", BOTTOM: "flex-end" }[s.textAlignVertical];
 	const clamp = (s.textTruncation === "ENDING" || s.textAutoResize === "TRUNCATE") && s.maxLines > 1;
