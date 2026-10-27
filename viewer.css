@@ -105,7 +105,34 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-stage[data-mode="overlay"], .fv-stage[data-mode="diff"] { background: #fff; }
 .fv-stage[data-mode="overlay"] .fv-pane-render, .fv-stage[data-mode="diff"] .fv-pane-render { background: #fff; }
 .fv-stage[data-mode="diff"] .fv-pane-render { mix-blend-mode: difference; }
+/* En modo Figma el render sigue ahí (invisible) para ubicar las capas */
+.fv-stage[data-mode="figma"] .fv-pane-render { visibility: hidden; }
+.fv-marks { position: absolute; inset: 0; pointer-events: none; }
+.fv-mark { position: absolute; box-sizing: border-box; }
+.fv-mark-hover { border: calc(1px / var(--fv-z, 1)) dashed var(--fv-accent); }
+.fv-mark-sel { border: calc(2px / var(--fv-z, 1)) solid var(--fv-accent); box-shadow: 0 0 0 calc(1px / var(--fv-z, 1)) rgba(255, 255, 255, .7); }
+.fv-canvas { cursor: crosshair; }
 .fv-stage.fv-boost[data-mode="diff"] { filter: brightness(4); }
+
+.fv-switch[aria-pressed="true"] { background: var(--fv-accent); border-color: var(--fv-accent); color: #fff; }
+.fv-layers { display: flex; flex-direction: column; padding: 12px 0; }
+.fv-layers h2 { padding: 0 12px; }
+.fv-tree { flex: 1; overflow: auto; outline: none; }
+.fv-tree:focus-visible { box-shadow: inset 0 0 0 2px var(--fv-accent); }
+.fv-row { display: flex; align-items: baseline; gap: 5px; padding: 2px 8px; white-space: nowrap; cursor: default; }
+.fv-row.fv-hover { background: color-mix(in srgb, var(--fv-accent) 12%, transparent); }
+.fv-row.fv-sel { background: color-mix(in srgb, var(--fv-accent) 26%, transparent); }
+.fv-inside .fv-name, .fv-inside .fv-kind { color: var(--fv-muted); }
+.fv-toggle { width: 10px; flex: none; color: var(--fv-muted); cursor: pointer; }
+.fv-kind { width: 12px; flex: none; text-align: center; color: var(--fv-muted); font-size: 11px; }
+.fv-kind-instance { color: var(--fv-accent); }
+.fv-name { overflow: hidden; text-overflow: ellipsis; }
+.fv-sub { color: var(--fv-muted); overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.fv-tag { color: var(--fv-accent); font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
+.fv-selection { margin-bottom: 16px; }
+.fv-crumbs { margin-bottom: 8px; line-height: 1.6; }
+.fv-link { border: 0; background: none; padding: 0; color: var(--fv-accent); }
+.fv-link:hover { text-decoration: underline; }
 
 .fv-error { max-width: 560px; margin: 15vh auto; padding: 0 16px; }
 .fv-error h1 { font-size: 18px; }

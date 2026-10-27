@@ -307,3 +307,50 @@ test("modo inicial: el guardado si existe; si no, lado a lado; sin vista previa,
 	assert.equal(client.initialMode("diff", false), "render");
 	assert.deepEqual(client.MODES.map((m) => m.id), ["side", "overlay", "diff", "render", "figma"]);
 });
+
+// ---------------------------------------------------------------- árbol de capas y selección
+test("árbol: una capa por elemento, la instancia es una capa con su estructura adentro", () => {
+	card({});
+	const layers = client.treeModel(client.renderTree(cardData, "Card", {}));
+	assert.deepEqual(layers.map((l) => [l.depth, l.kind, l.inside]), [
+		[0, "box", null], [1, "text", null], [1, "text", null], [1, "box", null], [1, "icon", null], [1, "instance", null], [2, "text", "Tag"],
+	]);
+	assert.equal(layers[5].parent, layers[0]);
+	assert.deepEqual(layers[0].children.map((l) => l.id), [1, 2, 3, 4, 5]);
+	// Sin el punto (showDot = false) la capa no está: el árbol es el del render
+	assert.equal(client.treeModel(client.renderTree(cardData, "Card", { showDot: false })).length, 6);
+});
+
+test("árbol: nombres de Figma (textos por contenido) o, con Código, clases y componentes", () => {
+	const layers = client.treeModel(client.renderTree(cardData, "Card", { state: "Disabled" }));
+	const label = (i, code) => client.treeLabel(layers[i], code);
+	assert.deepEqual(label(2, false), { icon: "T", main: "No disponible", sub: "", tags: [] });
+	assert.deepEqual(label(2, true), { icon: "T", main: ".label", sub: "Label", tags: [] });
+	assert.deepEqual(label(1, false).tags, ["{title}"], "texto enlazado: se muestra la prop");
+	assert.equal(label(1, false).main, "Title");
+	assert.deepEqual(label(3, false).tags, ["si {showDot}"]);
+	assert.deepEqual(label(5, false), { icon: "◆", main: "Tag", sub: "", tags: [] });
+	assert.equal(label(5, true).main, "<Tag>");
+});
+
+test("árbol: los tramos de un texto con estilos distintos no son capas", () => {
+	const r = { tag: "span", attrs: {}, comp: "C", el: { name: "T", className: "t" }, children: ["Hola ", { tag: "span", attrs: {}, children: ["mundo"], comp: "C", el: {}, segment: true }] };
+	const layers = client.treeModel({ tag: "div", attrs: {}, comp: "C", el: { name: "C", className: "root" }, children: [r] });
+	assert.equal(layers.length, 2);
+	assert.equal(client.treeLabel(layers[1], false).main, "Hola mundo");
+});
+
+test("hitTest: la capa más profunda bajo el punto; entre iguales, la de encima", () => {
+	const items = [
+		{ rect: { x: 0, y: 0, width: 100, height: 100 }, depth: 0 },
+		{ rect: { x: 10, y: 10, width: 50, height: 20 }, depth: 1 },
+		{ rect: { x: 12, y: 12, width: 10, height: 10 }, depth: 2 },
+		{ rect: { x: 10, y: 10, width: 50, height: 20 }, depth: 1 },
+		{ rect: { x: 0, y: 0, width: 0, height: 0 }, depth: 5 },
+	];
+	assert.equal(client.hitTest(items, { x: 15, y: 15 }), 2);
+	assert.equal(client.hitTest(items, { x: 40, y: 15 }), 3, "dos hermanos iguales: el que se dibuja después");
+	assert.equal(client.hitTest(items, { x: 90, y: 90 }), 0);
+	assert.equal(client.hitTest(items, { x: 200, y: 0 }), -1);
+	assert.equal(client.hitTest(items, { x: 0, y: 0 }), 0, "las cajas vacías no cuentan");
+});

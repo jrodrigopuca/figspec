@@ -151,7 +151,11 @@ El último modo usado se recuerda. Sin vista previa en el paquete solo está el 
 
 Si un texto se ve con otra tipografía (por ejemplo, con serifas), la fuente del diseño no está instalada en tu equipo: el CSS la nombra sin una genérica de respaldo.
 
-En desarrollo: el árbol de capas y el inspector llegan en los próximos pasos (ver [BACKLOG.md](BACKLOG.md)).
+A la izquierda está el árbol de capas del render (▢ contenedor, T texto, ✦ ícono, ▣ imagen, ◆ instancia de otro componente, que se despliega para ver su estructura). Al pasar el puntero por el lienzo o por el árbol se marca la capa en los dos; un clic en el lienzo elige la capa más profunda bajo el puntero (en cualquier modo, también sobre la imagen de Figma) y dibuja su caja sobre el render y sobre la vista previa. **Esc** sube al contenedor; en el árbol se navega con las flechas. A la derecha, la ruta de la capa elegida y su clase.
+
+El interruptor **Código** (apagado por defecto, pensado para quien revisa el diseño) muestra en el árbol las clases y los componentes en lugar de los nombres de Figma; `{title}` indica un texto que viene de una prop y `si {showIcon}`, una capa que se muestra según una prop.
+
+En desarrollo: el inspector (caja medida y CSS de la capa) llega en el próximo paso (ver [BACKLOG.md](BACKLOG.md)).
 
 ## Pruebas
 

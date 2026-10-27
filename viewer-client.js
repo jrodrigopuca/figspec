@@ -168,7 +168,7 @@ function renderTree(data, name, values) {
 		const cases = spec.textCases(c.comp, el);
 		if (cases.length) return [String(spec.pickCase(cases, c.v, spec.baseText(el)))];
 		if (el.segments)
-			return el.segments.map((s) => (s.css ? node("span", { style: styleText(s.css) }, [s.text], c, el) : s.text));
+			return el.segments.map((s) => (s.css ? node("span", { style: styleText(s.css) }, [s.text], c, el, { segment: true }) : s.text));
 		return el.text !== undefined && el.text !== "" ? [el.text] : [];
 	}
 
@@ -267,6 +267,73 @@ function previewBox(preview) {
 	return { width: preview.width / preview.scale, height: preview.height / preview.scale };
 }
 
+// ---------------------------------------------------------------- árbol de capas
+// Capas del render en el orden del dibujo. Cada capa: { id, node (nodo virtual), parent, children,
+// depth, kind, inside (componente de la instancia que la contiene, o null) }. Una instancia es una
+// sola capa (◆) con la estructura de su subcomponente adentro; los tramos de un texto con estilos
+// distintos no son capas.
+function treeModel(root) {
+	const list = [];
+	(function walk(n, parent, depth, inside) {
+		const layer = { id: list.length, node: n, parent, children: [], depth, kind: layerKind(n), inside };
+		list.push(layer);
+		if (parent) parent.children.push(layer);
+		const within = n.instance ? n.comp : inside;
+		for (const k of n.children) if (typeof k !== "string" && !k.segment) walk(k, layer, depth + 1, within);
+	})(root, null, 0, null);
+	return list;
+}
+
+function layerKind(n) {
+	if (n.instance) return "instance";
+	if (n.tag === "svg" || n.svg) return "icon";
+	if (n.tag === "img") return "image";
+	if (n.tag === "span") return "text";
+	return "box";
+}
+
+const KIND_ICON = { box: "▢", text: "T", icon: "✦", image: "▣", instance: "◆" };
+
+// Texto visible de una capa (los tramos con estilo incluidos)
+function layerText(n) {
+	return n.children.map((k) => (typeof k === "string" ? k : k.segment ? layerText(k) : "")).join("");
+}
+
+// Nombre de la capa en el árbol: con Código apagado, el de Figma (los textos, por su contenido);
+// con Código, la clase (o el componente, en una instancia) y el nombre de Figma como secundario.
+// tags: lo que la enlaza a una prop ({title}: texto de la prop; si {showDot}: visibilidad).
+function treeLabel(layer, code) {
+	const n = layer.node;
+	const el = n.instance ? n.instance.el : n.el;
+	const figma = el.name || "";
+	const tags = [];
+	if (el.bind && el.bind.text) tags.push(`{${el.bind.text}}`);
+	if (el.bind && el.bind.visible) tags.push(`si {${el.bind.visible}}`);
+	if (el.bind && el.bind.icon) tags.push(`{${el.bind.icon}}`);
+	let main = figma;
+	if (layer.kind === "text" && !(el.bind && el.bind.text)) main = layerText(n).replace(/\s+/g, " ").trim() || figma;
+	let sub = n.instance ? n.comp : "";
+	if (code) {
+		sub = figma;
+		main = n.instance ? `<${n.comp}>` : `.${el.className}`;
+	}
+	if (sub === main) sub = "";
+	return { icon: KIND_ICON[layer.kind], main, sub, tags };
+}
+
+// Capa bajo un punto: la más profunda cuya caja lo contiene; entre iguales, la que se dibuja
+// después (queda encima). items: [{ rect: { x, y, width, height }, depth }] en orden del dibujo.
+function hitTest(items, point) {
+	let best = -1;
+	items.forEach((it, i) => {
+		const r = it.rect;
+		if (!r || r.width <= 0 || r.height <= 0) return;
+		if (point.x < r.x || point.y < r.y || point.x > r.x + r.width || point.y > r.y + r.height) return;
+		if (best < 0 || it.depth >= items[best].depth) best = i;
+	});
+	return best;
+}
+
 // ---------------------------------------------------------------- comparación
 // Modos del lienzo. Todos usan la misma escala y el mismo origen: el componente cae sobre la
 // vista previa (meta.preview.offset); en "Lado a lado" el render va a la derecha.
@@ -279,6 +346,23 @@ const MODES = [
 ];
 const SIDE_GAP = 24;
 const MODE_KEY = "figspec.viewer.mode";
+const CODE_KEY = "figspec.viewer.code";
+
+// localStorage puede no existir o fallar (archivo local, modo privado): solo es una comodidad
+function stored(key) {
+	try {
+		return localStorage.getItem(key);
+	} catch {
+		return null;
+	}
+}
+function store(key, value) {
+	try {
+		localStorage.setItem(key, value);
+	} catch {
+		// no se recuerda
+	}
+}
 
 // Qué se ve y dónde: tamaño del escenario y posición del panel del render
 function modeLayout(mode, box) {
@@ -307,7 +391,7 @@ function boot(doc, data) {
 			if (k === "text") el.textContent = v;
 			else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
 			else if (v !== false && v != null) el.setAttribute(k, v === true ? "" : v);
-		for (const k of kids.flat()) if (k) el.append(k);
+		for (const k of kids.flat(Infinity)) if (k) el.append(k);
 		return el;
 	};
 	app.removeAttribute("aria-busy");
@@ -319,7 +403,6 @@ function boot(doc, data) {
 
 	const design = data.spec;
 	const meta = design.meta;
-	const comps = [design.component, ...Object.values(design.subcomponents || {})];
 	let box = meta.preview ? previewBox(meta.preview) : { width: 0, height: 0 };
 	let zoom = 1;
 	let mode = null;
@@ -342,10 +425,34 @@ function boot(doc, data) {
 	const style = doc.createElement("style");
 	style.textContent = shadowCss(data);
 	shadow.append(style);
-	const nodes = new Map(); // elemento del render → nodo virtual (árbol e inspector)
-	mount(doc, shadow, renderTree(data, design.component.name, {}), nodes);
+	const nodes = new Map(); // elemento del render → nodo virtual
+	const tree = renderTree(data, design.component.name, {});
+	mount(doc, shadow, tree, nodes);
 	renderPane.append(host);
+	const hostX = meta.preview ? meta.preview.offset.x / meta.preview.scale : 0;
+	const hostY = meta.preview ? meta.preview.offset.y / meta.preview.scale : 0;
 
+	// Capas: el árbol del panel izquierdo, con el elemento del render de cada una
+	const layers = treeModel(tree);
+	const elementOf = new Map();
+	for (const [el, n] of nodes) elementOf.set(n, el);
+	const layerOf = new Map(layers.map((l) => [l.node, l]));
+	let selected = null;
+	let hovered = null;
+	let code = stored(CODE_KEY) === "1";
+	const expanded = new Set(layers.filter((l) => l.kind !== "instance" && !l.inside).map((l) => l.id));
+	expanded.add(0);
+
+	// Caja de una capa en coordenadas del panel (sin zoom); el render está en host
+	function rectOf(layer) {
+		const el = elementOf.get(layer.node);
+		if (!el) return null;
+		const r = el.getBoundingClientRect();
+		const hr = host.getBoundingClientRect();
+		return { x: (r.left - hr.left) / zoom + hostX, y: (r.top - hr.top) / zoom + hostY, width: r.width / zoom, height: r.height / zoom };
+	}
+	const marks = h("div", { class: "fv-marks", "aria-hidden": "true" });
+	stage.append(marks);
 	// El transform no cambia el espacio que ocupa: el contenedor toma el tamaño ya escalado para
 	// que el lienzo se pueda desplazar con zoom alto
 	const sizer = h("div", { class: "fv-sizer" }, stage);
@@ -379,18 +486,12 @@ function boot(doc, data) {
 		const l = modeLayout(m, box);
 		stage.dataset.mode = m;
 		figmaPane.hidden = !l.figma;
-		renderPane.hidden = !l.render;
 		renderPane.style.left = `${l.renderX}px`;
 		renderPane.style.opacity = m === "overlay" ? String(opacity) : "";
 		toolbar.replaceChildren(...modeTools[m]);
 		toolbar.hidden = !modeTools[m].length;
 		for (const [k, b] of Object.entries(modeButtons)) b.setAttribute("aria-pressed", String(k === m));
-		if (user)
-			try {
-				localStorage.setItem(MODE_KEY, m);
-			} catch {
-				// sin almacenamiento (archivo local en algunos navegadores): no se recuerda
-			}
+		if (user) store(MODE_KEY, m);
 		// Lado a lado ocupa el doble: se vuelve a ajustar al cambiar de tamaño
 		if (before && before.width !== l.width) fit();
 		else if (before) setZoom(zoom);
@@ -412,9 +513,157 @@ function boot(doc, data) {
 		stage.style.transform = `scale(${z})`;
 		sizer.style.width = `${b.width * z}px`;
 		sizer.style.height = `${b.height * z}px`;
+		stage.style.setProperty("--fv-z", String(z));
 		zoomLabel.textContent = `${Math.round(z * 100)} %`;
+		drawMarks();
 	};
 	const fit = () => setZoom(fitZoom(layoutBox(), canvas.getBoundingClientRect()));
+
+	// Cajas de la capa señalada y la elegida, en los dos paneles (en lado a lado, en ambos)
+	function drawMarks() {
+		if (!mode) return;
+		const l = modeLayout(mode, box);
+		const offsets = mode === "side" ? [0, l.renderX] : [0];
+		const boxes = [];
+		for (const [layer, cls] of [[hovered, "fv-mark-hover"], [selected, "fv-mark-sel"]]) {
+			if (!layer || (layer === hovered && hovered === selected && cls === "fv-mark-hover")) continue;
+			const r = rectOf(layer);
+			if (!r) continue;
+			for (const dx of offsets)
+				boxes.push(h("div", { class: `fv-mark ${cls}`, style: `left:${r.x + dx}px;top:${r.y}px;width:${r.width}px;height:${r.height}px` }));
+		}
+		marks.replaceChildren(...boxes);
+	}
+
+	// Punto del lienzo → coordenadas del render; en lado a lado vale cualquiera de los dos paneles
+	function pointAt(e) {
+		const sr = stage.getBoundingClientRect();
+		let x = (e.clientX - sr.left) / zoom;
+		const y = (e.clientY - sr.top) / zoom;
+		const l = modeLayout(mode, box);
+		if (mode === "side") {
+			if (x >= l.renderX) x -= l.renderX;
+			else if (x > box.width) return null;
+		}
+		return { x, y };
+	}
+	function layerAt(e) {
+		const p = pointAt(e);
+		if (!p) return null;
+		const i = hitTest(layers.map((l) => ({ rect: rectOf(l), depth: l.depth })), p);
+		return i < 0 ? null : layers[i];
+	}
+
+	// ---------------------------------------------------------------- árbol
+	const treeBox = h("div", { class: "fv-tree", role: "tree", tabindex: "0", "aria-label": "Capas" });
+	const rowOf = new Map();
+	const visibleLayers = () => layers.filter((l) => {
+		for (let p = l.parent; p; p = p.parent) if (!expanded.has(p.id)) return false;
+		return true;
+	});
+	function drawTree() {
+		rowOf.clear();
+		treeBox.replaceChildren(...visibleLayers().map((layer) => {
+			const lab = treeLabel(layer, code);
+			const has = layer.children.length > 0;
+			const row = h("div", {
+				class: `fv-row${layer.inside ? " fv-inside" : ""}${layer === selected ? " fv-sel" : ""}${layer === hovered ? " fv-hover" : ""}`,
+				role: "treeitem", id: `fv-layer-${layer.id}`, "aria-level": String(layer.depth + 1), "aria-selected": String(layer === selected),
+				"aria-expanded": has ? String(expanded.has(layer.id)) : null,
+				style: `padding-left:${8 + layer.depth * 14}px`,
+				onclick: () => select(layer),
+				onmouseenter: () => hover(layer),
+				onmouseleave: () => hover(null),
+			},
+				h("span", { class: "fv-toggle", text: has ? (expanded.has(layer.id) ? "▾" : "▸") : "", onclick: (e) => { e.stopPropagation(); toggle(layer); } }),
+				h("span", { class: `fv-kind fv-kind-${layer.kind}`, text: lab.icon }),
+				h("span", { class: "fv-name", text: lab.main }),
+				lab.sub && h("span", { class: "fv-sub", text: lab.sub }),
+				lab.tags.map((t) => h("span", { class: "fv-tag", text: t })),
+			);
+			rowOf.set(layer, row);
+			return row;
+		}));
+		treeBox.setAttribute("aria-activedescendant", selected ? `fv-layer-${selected.id}` : "");
+	}
+	function toggle(layer, open = !expanded.has(layer.id)) {
+		if (open) expanded.add(layer.id);
+		else expanded.delete(layer.id);
+		drawTree();
+	}
+	function select(layer) {
+		selected = layer;
+		for (let p = layer && layer.parent; p; p = p.parent) expanded.add(p.id);
+		drawTree();
+		drawMarks();
+		showSelection();
+		const row = layer && rowOf.get(layer);
+		if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+	}
+	function hover(layer) {
+		if (hovered === layer) return;
+		const old = hovered && rowOf.get(hovered);
+		if (old) old.classList.remove("fv-hover");
+		hovered = layer;
+		const row = layer && rowOf.get(layer);
+		if (row) row.classList.add("fv-hover");
+		drawMarks();
+	}
+	treeBox.addEventListener("keydown", (e) => {
+		const vis = visibleLayers();
+		const i = selected ? vis.indexOf(selected) : -1;
+		let next = null;
+		if (e.key === "ArrowDown") next = vis[Math.min(vis.length - 1, i + 1)];
+		else if (e.key === "ArrowUp") next = vis[Math.max(0, i - 1)];
+		else if (e.key === "Home") next = vis[0];
+		else if (e.key === "End") next = vis[vis.length - 1];
+		else if (e.key === "ArrowRight" && selected) {
+			if (selected.children.length && !expanded.has(selected.id)) return e.preventDefault(), toggle(selected, true);
+			next = selected.children[0];
+		} else if (e.key === "ArrowLeft" && selected) {
+			if (selected.children.length && expanded.has(selected.id)) return e.preventDefault(), toggle(selected, false);
+			next = selected.parent;
+		} else return;
+		e.preventDefault();
+		if (next) select(next);
+	});
+
+	// Lienzo: el clic elige la capa más profunda bajo el puntero, en cualquier modo
+	canvas.addEventListener("mousemove", (e) => hover(layerAt(e)));
+	canvas.addEventListener("mouseleave", () => hover(null));
+	canvas.addEventListener("click", (e) => select(layerAt(e)));
+
+	// Panel derecho: la capa elegida (el inspector completo llega después)
+	const selectionBox = h("div", { class: "fv-selection" });
+	function showSelection() {
+		if (!selected) {
+			selectionBox.replaceChildren(h("p", { class: "fv-hint", text: "Haz clic en el lienzo o en una capa para verla. Esc sube al contenedor." }));
+			return;
+		}
+		const n = selected.node;
+		const el = n.instance ? n.instance.el : n.el;
+		const crumbs = [];
+		for (let p = selected; p; p = p.parent) crumbs.unshift(p);
+		selectionBox.replaceChildren(
+			h("nav", { class: "fv-crumbs", "aria-label": "Ruta" }, crumbs.map((c, i) => [
+				i > 0 && h("span", { "aria-hidden": "true", text: " › " }),
+				h("button", { type: "button", class: "fv-link", text: treeLabel(c, code).main, onclick: () => select(c) }),
+			])),
+			h("dl", {},
+				h("dt", { text: "Capa en Figma" }), h("dd", { text: el.name || "—" }),
+				h("dt", { text: "Clase" }), h("dd", { text: `.${el.className}` }),
+				h("dt", { text: "Componente" }), h("dd", { text: n.instance ? `${n.comp} (instancia en ${n.instance.parent})` : n.comp }),
+			),
+		);
+	}
+	const codeSwitch = h("button", { type: "button", class: "fv-switch", "aria-pressed": String(code), title: "Muestra las clases y el código generado",
+		onclick: () => {
+			code = !code;
+			codeSwitch.setAttribute("aria-pressed", String(code));
+			store(CODE_KEY, code ? "1" : "0");
+			drawTree();
+			showSelection();
+		}, text: "Código" });
 
 	const notices = [];
 	if (data.missing && data.missing.length)
@@ -424,6 +673,7 @@ function boot(doc, data) {
 		...[h("header", { class: "fv-bar" },
 			h("div", { class: "fv-title" }, h("strong", { text: design.component.name }), design.component.figmaName !== design.component.name && h("span", { text: design.component.figmaName })),
 			modeBar,
+			codeSwitch,
 			h("div", { class: "fv-zoombar", role: "group", "aria-label": "Zoom" },
 				h("button", { type: "button", "aria-label": "Alejar", text: "−", onclick: () => setZoom(stepZoom(zoom, -1)) }),
 				zoomLabel,
@@ -434,12 +684,14 @@ function boot(doc, data) {
 		),
 		notices.length > 0 && h("div", { class: "fv-notices", role: "status" }, notices.map((n) => h("p", { text: n }))),
 		h("main", { class: "fv-main" },
-			h("aside", { class: "fv-side", "aria-label": "Componentes" },
-				h("h2", { text: "Componentes" }),
-				h("ul", {}, comps.map((c) => h("li", {}, h("span", { text: c.name }), c.figmaName !== c.name && h("small", { text: c.figmaName })))),
+			h("aside", { class: "fv-side fv-layers", "aria-label": "Capas" },
+				h("h2", { text: "Capas" }),
+				treeBox,
 			),
 			h("div", { class: "fv-center" }, toolbar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
+				h("h2", { text: "Selección" }),
+				selectionBox,
 				h("h2", { text: "Detalles" }),
 				h("dl", {},
 					h("dt", { text: "Vista previa" }),
@@ -475,6 +727,12 @@ function boot(doc, data) {
 			}, 400);
 			return;
 		}
+		// Esc sube al contenedor de la capa elegida
+		if (e.key === "Escape" && selected) {
+			e.preventDefault();
+			select(selected.parent);
+			return;
+		}
 		if (!(e.metaKey || e.ctrlKey)) return;
 		if (e.key === "0") fit();
 		else if (e.key === "1") setZoom(1);
@@ -483,15 +741,11 @@ function boot(doc, data) {
 	});
 	// Sin vista previa, el escenario toma el tamaño del componente dibujado
 	if (!meta.preview) box = { width: Math.max(1, host.offsetWidth), height: Math.max(1, host.offsetHeight) };
-	let saved = null;
-	try {
-		saved = localStorage.getItem(MODE_KEY);
-	} catch {
-		// sin almacenamiento: modo por defecto
-	}
-	setMode(initialMode(saved, !!data.preview));
+	drawTree();
+	showSelection();
+	setMode(initialMode(stored(MODE_KEY), !!data.preview));
 	fit();
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

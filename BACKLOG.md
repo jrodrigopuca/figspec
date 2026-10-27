@@ -136,7 +136,15 @@ carpeta aparte):
   recuerda en localStorage (con try/catch); sin vista previa solo Render, con el motivo en los
   demás. Validado en Chrome con menu mobile y login: en Diferencia coinciden cajas, íconos e
   imagen, y se destacan los textos por las fuentes no instaladas; parpadeo y modo guardado
-  comprobados con eventos simulados; tema claro y ancho de 800px revisados) · 6 árbol + hit-test · 7 inspector ·
+  comprobados con eventos simulados; tema claro y ancho de 800px revisados) · ~~6 árbol + hit-test~~ (hecho: `treeModel` arma las capas desde el
+  render (la instancia es una capa ◆ con su estructura en gris, plegada); `treeLabel` da el nombre
+  de Figma (textos por contenido) o, con el interruptor Código, clase/componente, más `{prop}` y
+  `si {prop}`; `hitTest` elige la más profunda (entre iguales, la de encima) con las cajas de
+  cada elemento; el clic funciona en todos los modos, también sobre la imagen de Figma y en el
+  panel izquierdo de lado a lado; cajas de hover y selección en ambos paneles con borde que no
+  cambia con el zoom; Esc sube; teclado en el árbol; ruta y clase en el panel derecho. Validado
+  en Chrome con eventos simulados (clic sobre "Dashboard" en el panel de Figma, Esc, Código,
+  desplegar una instancia) y arranque de las 24 salidas; 4 pruebas nuevas) · 7 inspector ·
   8 aviso de fuentes + README.
   _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
   lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de
