@@ -466,14 +466,30 @@ test("renombrar: la clase y el componente que dará el extractor", () => {
 	assert.equal(client.codeComponent("---"), "Componente");
 });
 
-test("archivo de decisiones: lo aplicado antes más los cambios nuevos; null quita", () => {
-	const meta = { source: { node: "33:566" }, decisions: { names: { root: "Menú", byId: { "1:1": "uno", "2:2": "dos" }, states: { "9:9": "off" } } } };
-	assert.deepEqual(client.decisionsDoc(meta, { byId: { "2:2": null, "3:3": "tres" } }), {
-		figspec: "decisions", version: 1, component: "33:566",
-		names: { root: "Menú", byId: { "1:1": "uno", "3:3": "tres" }, states: { "9:9": "off" } },
-	});
-	assert.deepEqual(client.decisionsDoc(meta, { root: null, byId: {} }).names.root, undefined);
-	assert.deepEqual(client.decisionsDoc({ source: { node: "1:0" } }, { root: "Nuevo", byId: {} }).names, { root: "Nuevo", byId: {}, states: {} });
+test("archivo de decisiones v2: lo aplicado antes más los cambios nuevos, con ruta y fecha", () => {
+	const meta = { source: { node: "33:566" }, decisions: { version: 2, component: { id: "33:566", figma: "menu mobile" }, root: { name: "Menú", at: "t0" },
+		layers: [{ id: "1:1", figma: "Uno", path: [["Uno", 0]], name: "uno", at: "t0" }, { id: "2:2", name: "dos", at: "t0" }, { id: "8:8", name: "huérfano", at: "t0", orphan: true }],
+		states: [{ id: "9:9", name: "off", at: "t0" }] } };
+	const info = (id) => ({ "2:2": { figma: "Dos", path: [["Dos", 0]] }, "3:3": { figma: "Tres", path: [["A", 0], ["Tres", 1]] } })[id];
+	const doc = client.decisionsDoc(meta, { byId: { "2:2": null, "3:3": "tres" } }, info, "t1");
+	assert.equal(doc.version, 2);
+	assert.deepEqual(doc.component, { id: "33:566", figma: "menu mobile" });
+	assert.deepEqual(doc.root, { name: "Menú", at: "t0" });
+	assert.deepEqual(doc.layers, [
+		{ id: "1:1", figma: "Uno", path: [["Uno", 0]], name: "uno", at: "t0" },
+		{ id: "2:2", figma: "Dos", path: [["Dos", 0]], name: null, at: "t1", origin: "viewer" },
+		{ id: "8:8", name: "huérfano", at: "t0" },
+		{ id: "3:3", figma: "Tres", path: [["A", 0], ["Tres", 1]], name: "tres", at: "t1", origin: "viewer" },
+	], "quitar queda registrado (null) y lo que no encontró capa se conserva");
+	assert.deepEqual(doc.states, [{ id: "9:9", name: "off", at: "t0" }]);
+	assert.deepEqual(client.decisionsDoc(meta, { root: null, byId: {} }, info, "t2").root, { name: null, at: "t2", origin: "viewer" });
+});
+
+test("archivo de decisiones: lee lo aplicado por salidas anteriores (v1)", () => {
+	const meta = { source: { node: "1:0" }, decisions: { names: { root: "Menú", byId: { "1:1": "uno" }, states: {} } } };
+	assert.equal(client.appliedName(meta, "root"), "Menú");
+	assert.equal(client.appliedName(meta, "1:1"), "uno");
+	assert.deepEqual(client.decisionsDoc(meta, { byId: {} }, undefined, "t").layers, [{ id: "1:1", name: "uno" }]);
 });
 
 test("archivo de decisiones: el extractor lo acepta tal como lo arma el visualizador", () => {
@@ -487,7 +503,7 @@ test("archivo de decisiones: el extractor lo acepta tal como lo arma el visualiz
 	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 	assert.equal(spec.component.name, "Tarjeta");
 	assert.ok(spec.component.structure.children.some((e) => e.id === id && e.className === "leyenda"));
-	assert.deepEqual(spec.meta.decisions.names.byId, { [id]: "Leyenda" });
+	assert.deepEqual(spec.meta.decisions.layers.map((x) => [x.id, x.name, x.origin]), [[id, "Leyenda", "viewer"]]);
 	assert.equal(spec.meta.source.bundle, "in.json");
 });
 

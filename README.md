@@ -212,7 +212,9 @@ Con **Código** prendido, el inspector tiene un campo **Nombre en código** para
 1. **Descargar decisiones** guarda `figspec-<nombre>.decisions.json` (mismo nombre que el paquete del plugin).
 2. Déjalo junto al paquete (el navegador suele descargar los dos en la misma carpeta) y vuelve a generar con `npm start` o `node extractor.js figspec-menu-mobile.json --viewer`: el extractor lo encuentra solo. Si está en otro lugar, `--decisions <archivo>`.
 
-El archivo usa los id de Figma de cada capa, así que sigue valiendo si exportas de nuevo el mismo componente. Sus nombres ganan sobre los elegidos en el plugin (y `--name` gana sobre todo). Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos. **Quitar** descarta un cambio o, si ya estaba aplicado, lo saca del archivo para que el extractor vuelva a elegir el nombre.
+Cada nombre del archivo se relaciona con su capa por el id de Figma y, si ese id no está (por ejemplo, al exportar una copia del componente), por su **ruta**: los nombres de las capas desde la raíz y su posición entre hermanos del mismo nombre. El extractor avisa qué aplicó por ruta y qué no encontró; lo que no encuentra capa no se aplica pero se conserva. Cada nombre lleva su **fecha**: si una capa tiene nombres en varios archivos (el del plugin, el de decisiones), gana el más reciente; `--name` gana sobre todo.
+
+Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos (también los nombres elegidos en el plugin, que así pasan al archivo). **Quitar** descarta un cambio o, si ya estaba aplicado, registra que se quitó (con su fecha, para que un archivo más viejo no lo vuelva a poner) y el extractor vuelve a elegir el nombre.
 
 Los nombres viven en ese archivo, no en Figma (el plugin es de solo lectura): guárdalo junto al paquete. Más adelante vivirá en una carpeta del proyecto, versionada (ver BACKLOG.md).
 

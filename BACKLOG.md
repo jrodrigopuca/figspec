@@ -130,7 +130,16 @@ carpeta aparte):
   `figma` simulado de las pruebas falla ante cualquier escritura y una prueba revisa el código
   (con un `setPluginData` agregado a propósito fallan 8 de 9). _Prueba pendiente en Figma real:_
   que la segunda descarga (los nombres) no la bloquee Figma o el navegador.) ·
-  2 decisiones v2 (id, ruta, fecha; lectura de v1), carpetas en `.env`, combinación de entrantes ·
+  2a ~~decisiones v2~~ (hecho: el extractor junta las fuentes —nombres dentro de paquetes
+  viejos, `.names.json`, archivo de decisiones—, relaciona cada nombre por id y, si no está, por
+  ruta (`layerIndex`, misma regla que el plugin), combina por fecha `at` (a igual fecha, el que se
+  lee después), `name: null` registra una quita, lo que no encuentra capa se informa y se
+  conserva (`orphan` en `meta.decisions`), `meta.decisions` pasa a v2 con ruta y nombre en Figma;
+  `figma-geometry.json` suma `paths`; el visualizador descarga v2 con ruta, fecha y origen y lee
+  lo aplicado en v1 o v2. Validado con el menú real: un archivo v1 se sigue aplicando, y una
+  copia con todos los ids cambiados aplica 9 nombres por ruta; 7 pruebas nuevas) ·
+  2b carpetas en `.env`, un archivo de decisiones por componente en el proyecto, combinación de
+  entrantes ·
   3 visualizador: modo Nombres (sin Código, con estados), "Guardar nombres", estado
   aplicados/sin guardar, servidor local · 4 `npm run react` (destino, al día, aviso de cambios en
   clases y props) · 5 grupos repetidos.

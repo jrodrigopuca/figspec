@@ -149,6 +149,7 @@ const ctx = {
 
 // ---------------------------------------------------------------- main
 function main() {
+	const decisionSources = []; // archivos con nombres elegidos (ver resolveDecisions)
 	if (!opts.from) {
 		printHelp();
 		fail(
@@ -206,21 +207,16 @@ function main() {
 		nodeId = data.nodeId || nodeId;
 		ctx.fileKey = data.fileKey || "(plugin)";
 		for (const v of Object.values(data.variables || {})) ctx.variables[v.id] = v;
+		// Paquetes de antes del plugin de solo lectura: traían los nombres elegidos adentro
 		const names = data.names || {};
-		ctx.namesById = new Map(Object.entries(names.byId || {}).filter(([, v]) => v));
-		ctx.statesById = new Map(
-			Object.entries(names.states || {})
-				.map(([id, v]) => [id, String(v).trim()])
-				.filter(([, v]) => v),
-		);
-		if (names.root) ctx.rootName = names.root;
+		if (names.root || Object.keys(names.byId || {}).length || Object.keys(names.states || {}).length)
+			decisionSources.push({ file: `${path.basename(opts.from)} (nombres dentro del paquete, plugin anterior)`, origin: "plugin", fallbackAt: data.exportedAt || "", data: { figspec: "decisions", version: 1, names } });
 		console.error(
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
 	}
-	for (const f of opts.nameFiles || []) applyDecisions(f, nodeId);
-	if (opts.decisions) applyDecisions(opts.decisions, nodeId);
-	if (!opts.name && ctx.rootName) opts.name = ctx.rootName; // --name tiene prioridad
+	for (const f of opts.nameFiles || []) decisionSources.push(readDecisions(f, "plugin"));
+	if (opts.decisions) decisionSources.push(readDecisions(opts.decisions, "decisions"));
 
 	const entry = data.nodes[nodeId];
 	if (!entry || !entry.document) fail(`No se encontró el nodo ${nodeId} en ${opts.from}.`);
@@ -229,6 +225,9 @@ function main() {
 	ctx.componentSets = entry.componentSets || {};
 
 	const root = entry.document;
+	ctx.layerIndex = layerIndex(root);
+	if (decisionSources.length) resolveDecisions(decisionSources, root, nodeId);
+	if (!opts.name && ctx.rootName) opts.name = ctx.rootName; // --name tiene prioridad
 	const component = buildRoot(root);
 	// La raíz nunca se renombra sola: es el nombre público del componente
 	if (!opts.name && isGeneric(component.figmaName)) {
@@ -322,7 +321,7 @@ function main() {
 	// Posibles inconsistencias del diseño, aparte: el desarrollador se lo puede llevar a UX
 	// Cajas de Figma por capa (para la lista de desvíos del visualizador)
 	if (ctx.geometry && ctx.geometry.some((v) => Object.keys(v.boxes).length))
-		write("figma-geometry.json", JSON.stringify({ format: 1, node: nodeId, variants: ctx.geometry }) + "\n", (s) => s);
+		write("figma-geometry.json", JSON.stringify({ format: 1, node: nodeId, variants: ctx.geometry, paths: Object.fromEntries(ctx.layerIndex.pathOf) }) + "\n", (s) => s);
 	if (ctx.inconsistencies.length) {
 		write("inconsistencies.md", inconsistenciesReport(component), (s) => s);
 		console.error(
@@ -343,18 +342,22 @@ function main() {
 }
 
 // ---------------------------------------------------------------- decisiones
-// Nombres que no vienen de Figma: los que se eligen en la ventana del plugin (se exportan aparte,
-// <paquete>.names.json) y los que se deciden en el visualizador (<paquete>.decisions.json). Mismo
-// formato, "figspec": "decisions":
-//   v1: { "version": 1, "component": "<id>", "names": { "root", "byId": { id: nombre }, "states" } }
+// Nombres que no vienen de Figma: los elegidos en la ventana del plugin (se exportan aparte,
+// <paquete>.names.json) y los decididos en el visualizador (archivo de decisiones). Mismo formato,
+// "figspec": "decisions":
 //   v2: { "version": 2, "component": { "id", "figma" }, "root": { "name", "at" },
-//         "layers": [{ "id", "figma", "path", "name", "at" }], "states": [ ...igual ], "groups": [] }
-// Se aplican en orden (los nombres del plugin, luego las decisiones: la última gana) sobre los
-// del paquete (paquetes viejos que traían "names"); --name gana sobre todo. Lo aplicado queda en
-// meta.decisions, así el visualizador lo conserva al guardar más cambios.
+//         "layers": [{ "id", "figma", "path", "name", "at" }], "states": [ …igual ], "groups": [] }
+//   v1 (se sigue leyendo): { "version": 1, "component": "<id>", "names": { "root", "byId", "states" } }
+// Cada nombre se relaciona con su capa por id; si el id no existe (p. ej. una copia del
+// componente), por la ruta: pares [nombre en Figma, n] desde la raíz (en un set, desde la variante
+// por defecto), con n = posición entre hermanos del mismo nombre, contando las ocultas; entra en
+// las instancias. Se combinan por fecha ("at"): en cada capa gana el más reciente; a igual fecha,
+// el archivo que se lee después (decisiones después que los del plugin). name: null quita un
+// nombre (registrado, para que un archivo viejo no lo reponga). Lo que no encuentra capa se
+// informa y se conserva en meta.decisions. --name gana sobre todo.
 const DECISIONS_VERSION = 2;
 
-function applyDecisions(file, nodeId) {
+function readDecisions(file, origin) {
 	let d;
 	try {
 		d = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -365,29 +368,120 @@ function applyDecisions(file, nodeId) {
 		fail(`${file} no es un archivo de decisiones de figspec (falta "figspec": "decisions").`);
 	if (d.version > DECISIONS_VERSION)
 		fail(`${file} es un archivo de decisiones versión ${d.version}, más nuevo que este extractor: actualízalo.`);
-	const componentId = d.component && typeof d.component === "object" ? d.component.id : d.component;
-	if (componentId && componentId !== nodeId) {
-		const msg = `Los nombres de ${path.basename(file)} son de otro componente (${componentId}; este es ${nodeId}): se aplican solo los de capas que existan.`;
+	let fallbackAt = d.savedAt || "";
+	if (!fallbackAt)
+		try {
+			fallbackAt = fs.statSync(file).mtime.toISOString();
+		} catch {
+			// sin fecha: cuenta como la más antigua
+		}
+	return { file: path.basename(file), origin, fallbackAt, data: d };
+}
+
+// Ruta de cada capa (ver arriba) y, al revés, la capa de cada ruta; también todos los ids
+function layerIndex(root) {
+	const pathOf = new Map();
+	const idOfPath = new Map();
+	const nameOf = new Map();
+	(function visit(n, p) {
+		pathOf.set(n.id, p);
+		idOfPath.set(JSON.stringify(p), n.id);
+		const seen = new Map();
+		for (const c of n.children || []) {
+			const k = seen.get(c.name) || 0;
+			seen.set(c.name, k + 1);
+			visit(c, [...p, [c.name, k]]);
+		}
+	})(renderedRoot(root), []);
+	(function all(n) {
+		nameOf.set(n.id, n.name);
+		(n.children || []).forEach(all);
+	})(root);
+	return { pathOf, idOfPath, nameOf };
+}
+
+// Entradas normalizadas de un archivo (v1 o v2): { root, layers, states }
+function decisionEntries(src) {
+	const d = src.data;
+	const v2 = d.version >= 2;
+	const norm = (e, at) => {
+		const name = e.name === null ? null : String(e.name == null ? "" : e.name).trim();
+		return { id: e.id, figma: e.figma, path: Array.isArray(e.path) ? e.path : undefined, name, at: e.at || at, origin: e.origin || src.origin, file: src.file };
+	};
+	const list = (v1map, v2list) =>
+		(v2 ? v2list || [] : Object.entries(v1map || {}).map(([id, name]) => ({ id, name })))
+			.map((e) => norm(e, src.fallbackAt))
+			.filter((e) => e.id && (e.name === null || e.name));
+	const names = d.names || {};
+	const rawRoot = v2 ? d.root : names.root != null ? { name: names.root } : null;
+	const root = rawRoot && (typeof rawRoot === "object" ? norm({ ...rawRoot, id: "root" }, src.fallbackAt) : norm({ id: "root", name: rawRoot }, src.fallbackAt));
+	return {
+		component: d.component && typeof d.component === "object" ? d.component.id : d.component,
+		root: root && (root.name === null || root.name) ? root : null,
+		layers: list(names.byId, d.layers),
+		states: list(names.states, d.states),
+	};
+}
+
+function resolveDecisions(sources, root, nodeId) {
+	const { pathOf, idOfPath, nameOf } = ctx.layerIndex;
+	const newer = (a, b) => !a || (b.at || "") >= (a.at || "");
+	let byPath = 0;
+	const orphans = [];
+	const layers = new Map();
+	const states = new Map();
+	let rootEntry = null;
+	const counts = {};
+	for (const src of sources) {
+		const e = decisionEntries(src);
+		if (e.component && e.component !== nodeId) {
+			const msg = `Los nombres de ${src.file} son de otro componente (${e.component}; este es ${nodeId}): se buscan sus capas por id y por ruta.`;
+			console.error(`… ${msg}`);
+			ctx.notes.add(msg);
+		}
+		const place = (map, x) => {
+			// La capa: por id; si no existe, por la ruta; si tampoco, queda sin capa (se conserva)
+			let id = nameOf.has(x.id) ? x.id : null;
+			if (!id && x.path) {
+				id = idOfPath.get(JSON.stringify(x.path)) || null;
+				if (id) byPath++;
+			}
+			const entry = { ...x, id: id || x.id, orphan: !id };
+			if (id) {
+				entry.figma = nameOf.get(id);
+				if (pathOf.has(id)) entry.path = pathOf.get(id);
+			}
+			const key = id || `?${x.id}`;
+			if (newer(map.get(key), entry)) map.set(key, entry);
+		};
+		e.layers.forEach((x) => place(layers, x));
+		e.states.forEach((x) => place(states, x));
+		if (e.root && newer(rootEntry, e.root)) rootEntry = e.root;
+		counts[src.file] = e.layers.length + e.states.length + (e.root ? 1 : 0);
+	}
+	for (const x of layers.values()) if (!x.orphan && x.name) ctx.namesById.set(x.id, x.name);
+	for (const x of states.values()) if (!x.orphan && x.name) ctx.statesById.set(x.id, x.name);
+	if (rootEntry && rootEntry.name) ctx.rootName = rootEntry.name;
+	for (const x of [...layers.values(), ...states.values()]) if (x.orphan) orphans.push(x);
+	console.error(`↺ Nombres: ${Object.entries(counts).map(([f, n]) => `${n} de ${f}`).join(", ")}.`);
+	if (byPath) {
+		const msg = `${byPath} nombre(s) se aplicaron por la ruta de la capa: su id no está en este paquete (¿es una copia del componente?).`;
 		console.error(`… ${msg}`);
 		ctx.notes.add(msg);
 	}
-	// v1 → { id: nombre }; v2 → lista de entradas
-	const v2 = d.version >= 2;
-	const names = d.names || {};
-	const pairs = (v1map, list) =>
-		(v2 ? (list || []).map((e) => [e && e.id, e && e.name]) : Object.entries(v1map || {}))
-			.map(([id, v]) => [id, String(v == null ? "" : v).trim()])
-			.filter(([id, v]) => id && v);
-	const layers = pairs(names.byId, d.layers);
-	const states = pairs(names.states, d.states);
-	const rootRaw = v2 ? d.root && (typeof d.root === "object" ? d.root.name : d.root) : names.root;
-	const root = rootRaw && String(rootRaw).trim();
-	const acc = (ctx.decisions = ctx.decisions || { names: { byId: {}, states: {} } });
-	for (const [id, v] of layers) ctx.namesById.set(id, v), (acc.names.byId[id] = v);
-	for (const [id, v] of states) ctx.statesById.set(id, v), (acc.names.states[id] = v);
-	if (root) (ctx.rootName = root), (acc.names.root = root);
-	const count = layers.length + states.length + (root ? 1 : 0);
-	console.error(`↺ Nombres: ${count} de ${path.basename(file)}.`);
+	if (orphans.length) {
+		const msg = `${orphans.length} nombre(s) no encuentran su capa (ni por id ni por ruta) y no se aplicaron; se conservan en meta.decisions: ${orphans.slice(0, 5).map((x) => `${x.figma || x.id} → ${x.name}`).join(", ")}.`;
+		console.error(`… ${msg}`);
+		ctx.notes.add(msg);
+	}
+	const clean = ({ file, ...x }) => x;
+	ctx.decisions = {
+		version: DECISIONS_VERSION,
+		component: { id: nodeId, figma: root.name },
+		...(rootEntry ? { root: clean(rootEntry) } : {}),
+		layers: [...layers.values()].map(clean),
+		states: [...states.values()].map(clean),
+	};
 }
 
 // ---------------------------------------------------------------- manifiesto de salida

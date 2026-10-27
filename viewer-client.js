@@ -477,23 +477,49 @@ function codeComponent(name) {
 	return spec.pascal(name) || "Componente";
 }
 
-// Archivo de decisiones para el extractor (--decisions): lo ya aplicado (meta.decisions) más los
-// cambios nuevos. pending: { root?: nombre | null, byId: { id: nombre | null } }; null quita una
-// decisión anterior.
-function decisionsDoc(meta, pending) {
-	const base = (meta.decisions && meta.decisions.names) || {};
-	const byId = { ...(base.byId || {}) };
+// Lo ya aplicado (meta.decisions), en la forma v2: { root, layers: [...], states: [...] }. Las
+// salidas anteriores lo guardaban como v1 ({ names: { root, byId, states } }).
+function appliedDecisions(meta) {
+	const d = meta.decisions;
+	if (!d) return { root: null, layers: [], states: [] };
+	if (d.version >= 2) return { root: d.root || null, layers: d.layers || [], states: d.states || [] };
+	const n = d.names || {};
+	const list = (o) => Object.entries(o || {}).map(([id, name]) => ({ id, name }));
+	return { root: n.root ? { name: n.root } : null, layers: list(n.byId), states: list(n.states) };
+}
+
+// Nombre aplicado a una capa (o a la raíz, con id "root"); undefined si no hay
+function appliedName(meta, id) {
+	const a = appliedDecisions(meta);
+	if (id === "root") return a.root && a.root.name ? a.root.name : undefined;
+	const e = a.layers.find((x) => x.id === id && !x.orphan);
+	return e && e.name ? e.name : undefined;
+}
+
+// Archivo de decisiones (v2) para el extractor: lo ya aplicado más los cambios nuevos. pending:
+// { root?: nombre | null, byId: { id: nombre | null } }; null quita el nombre (queda registrado con
+// su fecha, así un archivo viejo no lo repone). info(id) → { figma, path } de la capa, para que el
+// extractor la reconozca aunque cambie el id. Se conserva lo que no encontró capa.
+function decisionsDoc(meta, pending, info = () => ({}), now = new Date().toISOString()) {
+	const a = appliedDecisions(meta);
+	const strip = ({ orphan, ...x }) => x;
+	const layers = new Map(a.layers.map((x) => [x.id, strip(x)]));
 	for (const [id, v] of Object.entries(pending.byId || {})) {
-		if (v === null) delete byId[id];
-		else byId[id] = v;
+		const i = info(id) || {};
+		layers.set(id, { id, ...(i.figma ? { figma: i.figma } : {}), ...(i.path ? { path: i.path } : {}), name: v, at: now, origin: "viewer" });
 	}
-	let root = base.root;
-	if ("root" in pending) root = pending.root === null ? undefined : pending.root;
+	let root = a.root ? strip(a.root) : null;
+	if ("root" in pending) root = { name: pending.root, at: now, origin: "viewer" };
 	return {
 		figspec: "decisions",
-		version: 1,
-		component: (meta.source && meta.source.node) || null,
-		names: { ...(root ? { root } : {}), byId, states: { ...(base.states || {}) } },
+		version: 2,
+		origin: "viewer",
+		savedAt: now,
+		component: { id: (meta.source && meta.source.node) || null, ...(meta.decisions && meta.decisions.component && meta.decisions.component.figma ? { figma: meta.decisions.component.figma } : {}) },
+		...(root ? { root } : {}),
+		layers: [...layers.values()],
+		states: a.states.map(strip),
+		groups: [],
 	};
 }
 
@@ -910,7 +936,7 @@ function boot(doc, data) {
 	} catch {
 		// guardado ilegible: se empieza de cero
 	}
-	const applied = (meta.decisions && meta.decisions.names) || {};
+	const wasApplied = (t) => appliedName(meta, t.kind === "root" ? "root" : t.id);
 	const savePending = () => store(DEC_KEY, JSON.stringify(pending));
 	const pendingCount = () => Object.keys(pending.byId).length + ("root" in pending ? 1 : 0);
 	// Qué se renombra al elegir una capa: el componente (la raíz) o la clase de la capa, por su id
@@ -928,7 +954,7 @@ function boot(doc, data) {
 	}
 	function setPending(t, value) {
 		const v = value.trim();
-		const was = t.kind === "root" ? applied.root : (applied.byId || {})[t.id];
+		const was = wasApplied(t);
 		const same = !v || v === t.current || (t.kind === "layer" && codeClass(v) === t.current && !was);
 		if (t.kind === "root") {
 			if (same) delete pending.root;
@@ -941,7 +967,7 @@ function boot(doc, data) {
 	}
 	function forget(t) {
 		// Vuelve al nombre de Figma: si había una decisión aplicada, se quita (null)
-		const was = t.kind === "root" ? applied.root : (applied.byId || {})[t.id];
+		const was = wasApplied(t);
 		if (t.kind === "root") {
 			if (was) pending.root = null;
 			else delete pending.root;
@@ -958,7 +984,14 @@ function boot(doc, data) {
 	// Sin la marca de copia del navegador ("figspec-x (1).json"): el extractor lo busca por el original
 	const fileName = bundleFile.replace(/ ?\(\d+\)(?=\.json$)/i, "").replace(/\.json$/i, "") + ".decisions.json";
 	function download() {
-		const blob = new Blob([JSON.stringify(decisionsDoc(meta, pending), null, 2) + "\n"], { type: "application/json" });
+		// Ruta y nombre en Figma de cada capa, para reconocerla aunque cambie el id (copias)
+		const paths = (data.geometry && data.geometry.paths) || {};
+		const figmaName = (id) => {
+			const l = layers.find((x) => { const t = renameTarget(x); return t && t.id === id; });
+			return l ? renameTarget(l).figma : undefined;
+		};
+		const doc = decisionsDoc(meta, pending, (id) => ({ figma: figmaName(id), path: paths[id] }));
+		const blob = new Blob([JSON.stringify(doc, null, 2) + "\n"], { type: "application/json" });
 		const a = doc.createElement("a");
 		a.href = URL.createObjectURL(blob);
 		a.download = fileName;
@@ -1121,7 +1154,7 @@ function boot(doc, data) {
 			const input = h("input", { type: "text", value: shown, "aria-label": target.kind === "root" ? "Nombre del componente" : "Nombre en código",
 				oninput: (e) => { showResult(e.target.value); setPending(target, e.target.value); } });
 			showResult(shown);
-			const was = target.kind === "root" ? applied.root : (applied.byId || {})[target.id];
+			const was = wasApplied(target);
 			parts.push(section(target.kind === "root" ? "Nombre del componente" : "Nombre en código",
 				h("div", { class: "fv-rename" }, input,
 					(p !== undefined || was) && h("button", { type: "button", text: "Quitar", title: was ? "Quita la decisión: el extractor vuelve a elegir el nombre (el de Figma o su sugerencia)" : "Descarta este cambio", onclick: () => forget(target) })),
@@ -1368,4 +1401,4 @@ function boot(doc, data) {
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, geometryFor, deviations, deviationText, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, treeModel, treeLabel, hitTest, appliedDecisions, appliedName, geometryFor, deviations, deviationText, codeClass, codeComponent, decisionsDoc, propControls, previewFor, cssGroups, valueParts, cssText, fontFamilies, fontInstalled, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

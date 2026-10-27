@@ -209,7 +209,7 @@ test("los nombres elegidos van en un archivo aparte; el paquete es la foto de Fi
 	const { spec, byName } = extract(bundle, [], names);
 	assert.equal(spec.component.name, "Nav");
 	assert.equal(byName.find((e) => e.name === "Frame 9").className, "introCard");
-	assert.deepEqual(spec.meta.decisions.names.byId, { [frame9.id]: "intro card" }, "queda en meta.decisions para el visualizador");
+	assert.deepEqual(spec.meta.decisions.layers.map((x) => [x.id, x.name, x.origin]), [[frame9.id, "intro card", "plugin"]], "queda en meta.decisions para el visualizador");
 });
 
 test("ruta de una capa: posición entre homónimos (contando las ocultas)", async () => {
