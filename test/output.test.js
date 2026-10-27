@@ -25,7 +25,7 @@ function extract(input, args = []) {
 	const out = path.join(dir, "out");
 	execFileSync("node", [EXTRACTOR, file, "--out-dir", out, ...args], {
 		stdio: "pipe",
-		env: { ...process.env, FIGMA_FROM: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "" },
+		env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "" },
 	});
 	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 	const els = [];

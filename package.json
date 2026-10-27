@@ -7,10 +7,14 @@
     "figspec-viewer": "viewer.js"
   },
   "scripts": {
+    "start": "node extractor.js --open",
+    "extract": "node extractor.js",
+    "viewer": "node viewer.js --open",
     "test": "node --test test/"
   },
   "files": [
     "extractor.js",
+    "env.js",
     "react.js",
     "spec.js",
     "viewer.js",

@@ -23,8 +23,10 @@
  *   --no-css          Solo genera component.json.                                 FIGMA_CSS=false
  *   --react           Genera además componentes React (TypeScript), ver react.js.  FIGMA_REACT=true
  *   --viewer          Genera además viewer.html (visualizador), ver viewer.js.     FIGMA_VIEWER=true
- *   --decisions <archivo>  Nombres decididos en el visualizador (figspec-*.decisions.json).
- *                                                                               FIGMA_DECISIONS
+ *   --decisions <archivo>  Nombres decididos en el visualizador. Sin la opción, se usa
+ *                     <paquete>.decisions.json si está junto al paquete.      FIGMA_DECISIONS
+ *   --no-decisions    No aplica decisiones (ni las que estén junto al paquete).
+ *   --open            Genera el visualizador y lo abre en el navegador.
  *   --extract-repeated  Extrae los ítems repetidos a un subcomponente con props y estados.
  *                                                                               FIGMA_EXTRACT_REPEATED=true
  *   --assets, --png, --no-shallow, --css   Anulan lo definido en el .env.
@@ -52,43 +54,28 @@ const allSides = (w) => ({ top: w, right: w, bottom: w, left: w });
 
 // ---------------------------------------------------------------- .env
 // Lee la configuración (FIGMA_FROM, FIGMA_OUT_DIR…) desde un .env en la carpeta actual o en la
-// del script. Las variables ya definidas en el entorno tienen prioridad.
-loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, ".env")]);
-
-function loadEnv(files) {
-	for (const file of [...new Set(files)]) {
-		let text;
-		try {
-			text = fs.readFileSync(file, "utf8");
-		} catch {
-			continue;
-		}
-		for (const line of text.split(/\r?\n/)) {
-			const m = line.match(
-				/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/,
-			);
-			if (!m || process.env[m[1]] !== undefined) continue;
-			let v = m[2];
-			if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
-			else v = v.replace(/\s+#.*$/, "");
-			process.env[m[1]] = v;
-		}
-	}
-}
+// del extractor (ver env.js).
+const { loadDefaultEnv, expandHome, newestCopy, withoutCopyMark, openFile } = require("./env");
+loadDefaultEnv();
 
 // ---------------------------------------------------------------- CLI
 // Valores por defecto desde el entorno (.env incluido); los parámetros los anulan.
 const opts = {
-	from: process.env.FIGMA_FROM || null,
+	from: expandHome(process.env.FIGMA_FROM) || null,
 	name: process.env.FIGMA_NAME || null,
-	outDir: process.env.FIGMA_OUT_DIR || null,
+	outDir: expandHome(process.env.FIGMA_OUT_DIR) || null,
 	css: envFlag("FIGMA_CSS", true),
 	assets: envFlag("FIGMA_ASSETS", true),
 	png: envFlag("FIGMA_PNG", true),
 	shallow: envFlag("FIGMA_SHALLOW", false),
 	react: envFlag("FIGMA_REACT", false),
 	viewer: envFlag("FIGMA_VIEWER", false),
-	decisions: process.env.FIGMA_DECISIONS || null,
+	decisions: expandHome(process.env.FIGMA_DECISIONS) || null,
+	findDecisions: true, // busca <paquete>.decisions.json junto al paquete
+	open: false,
+	// Rutas del .env: el navegador guarda las descargas repetidas como copias ("x (1).json")
+	fromEnv: !!process.env.FIGMA_FROM,
+	decisionsFromEnv: !!process.env.FIGMA_DECISIONS,
 	extractRepeated: envFlag("FIGMA_EXTRACT_REPEATED", false),
 };
 const argv = process.argv.slice(2);
@@ -110,12 +97,14 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-viewer") opts.viewer = false;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
 	else if (a === "--name") opts.name = argv[++i];
-	else if (a === "--from" || a === "--json") opts.from = argv[++i];
-	else if (a === "--decisions") opts.decisions = argv[++i];
+	else if (a === "--from" || a === "--json") (opts.from = argv[++i]), (opts.fromEnv = false);
+	else if (a === "--decisions") (opts.decisions = argv[++i]), (opts.decisionsFromEnv = false);
+	else if (a === "--no-decisions") (opts.decisions = null), (opts.findDecisions = false);
+	else if (a === "--open") opts.open = true;
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
-	} else if (!a.startsWith("--")) opts.from = a;
+	} else if (!a.startsWith("--")) (opts.from = a), (opts.fromEnv = false);
 	else fail(`Opción desconocida: ${a}`);
 }
 
@@ -170,6 +159,22 @@ function main() {
 		fail("--react usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
 	if (opts.viewer && !opts.css)
 		fail("--viewer usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
+	if (opts.open && !opts.viewer) opts.viewer = true; // --open abre el visualizador: lo genera
+	// Desde el .env, la copia más reciente del paquete (el plugin descarga "figspec-x (1).json"…)
+	if (opts.fromEnv) {
+		const newest = newestCopy(opts.from);
+		if (newest !== opts.from) console.error(`↺ Se usa la copia más reciente: ${newest}`);
+		opts.from = newest;
+	}
+	if (opts.decisions && opts.decisionsFromEnv) opts.decisions = newestCopy(opts.decisions);
+	// Sin --decisions: el archivo que descarga el visualizador, junto al paquete y con su nombre
+	if (!opts.decisions && opts.findDecisions) {
+		const found = newestCopy(withoutCopyMark(opts.from).replace(/\.json$/i, "") + ".decisions.json");
+		if (fs.existsSync(found)) {
+			opts.decisions = found;
+			console.error(`↺ Decisiones junto al paquete: ${found} (--no-decisions para no usarlas)`);
+		}
+	}
 	let data;
 	try {
 		data = JSON.parse(fs.readFileSync(opts.from, "utf8"));
@@ -323,6 +328,7 @@ function main() {
 	writeManifest(outDir);
 
 	console.error(`✔ ${outDir}/`);
+	if (opts.open) openFile(path.resolve(outDir, "viewer.html"));
 	for (const f of files) console.error(`   ${f}`);
 	console.error(`  component.json ≈ ${Math.ceil(json.length / 4)} tokens`);
 }
@@ -2901,7 +2907,11 @@ Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_O
   FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_VIEWER, FIGMA_EXTRACT_REPEATED (true/false), FIGMA_DECISIONS.
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
 --viewer genera además viewer.html: el componente junto a la vista previa de Figma (un solo archivo).
---decisions <archivo> aplica los nombres decididos en el visualizador (figspec-<nombre>.decisions.json).
+--decisions <archivo> aplica los nombres decididos en el visualizador; sin la opción, se usa
+  figspec-<nombre>.decisions.json si está junto al paquete (--no-decisions para no usarlo).
+--open genera el visualizador y lo abre en el navegador.
+Las rutas aceptan ~ (carpeta personal). Si FIGMA_FROM viene del .env y el navegador guardó copias
+  ("figspec-x (1).json"), se usa la más reciente.
 --extract-repeated convierte los grupos repetidos (3+ hermanos iguales) en un subcomponente con props y estados.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
 Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);

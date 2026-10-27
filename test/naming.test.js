@@ -29,7 +29,7 @@ function extract(doc, args = [], extra = {}) {
 	const out = path.join(dir, "out");
 	execFileSync("node", [EXTRACTOR, input, "--out-dir", out, ...args], {
 		stdio: "pipe",
-		env: { ...process.env, FIGMA_FROM: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "" },
+		env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "" },
 	});
 	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 	const classes = [];

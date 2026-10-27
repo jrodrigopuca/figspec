@@ -58,10 +58,31 @@ figma-menu/                  carpeta de salida
 | `--no-css` / `--css` | `FIGMA_CSS` | Solo genera `component.json` |
 | `--react` / `--no-react` | `FIGMA_REACT` | Genera además componentes React en TypeScript (ver abajo) |
 | `--viewer` / `--no-viewer` | `FIGMA_VIEWER` | Genera además `viewer.html`, el visualizador (ver abajo) |
-| `--decisions <archivo>` | `FIGMA_DECISIONS` | Aplica los nombres decididos en el visualizador (ver abajo) |
+| `--decisions <archivo>` / `--no-decisions` | `FIGMA_DECISIONS` | Aplica los nombres decididos en el visualizador; sin la opción, usa `<paquete>.decisions.json` si está junto al paquete (ver abajo) |
+| `--open` | | Genera el visualizador y lo abre en el navegador |
 | `--extract-repeated` | `FIGMA_EXTRACT_REPEATED` | Convierte los ítems repetidos en un subcomponente con props y estados (ver abajo) |
 
-Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`.
+Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.env.example`. Las rutas aceptan `~` (tu carpeta personal).
+
+### Con npm y un `.env`
+
+Para ir de Figma al visualizador sin escribir rutas, fija una vez en un `.env` (copia de `.env.example`) de dónde sale el paquete y adónde va la salida:
+
+```sh
+FIGMA_FROM=~/Downloads/figspec-menu-mobile.json   # donde descarga el plugin
+FIGMA_OUT_DIR=figma-out
+```
+
+| Comando | Qué hace |
+|---|---|
+| `npm start` | Genera la salida y el visualizador, y lo abre en el navegador |
+| `npm run extract` | Solo genera la salida |
+| `npm run viewer` | Vuelve a generar el visualizador de `FIGMA_OUT_DIR` y lo abre |
+
+El ciclo queda: exportas con el plugin → `npm start` → revisas en el visualizador → si cambias nombres, "Descargar decisiones" → `npm start` otra vez. Dos ayudas para ese ciclo:
+
+- El navegador no reemplaza un archivo que ya descargaste: guarda `figspec-menu-mobile (1).json`. Cuando el paquete viene de `FIGMA_FROM`, el extractor usa la copia más reciente y lo dice. (Si lo pasas como parámetro, usa ese archivo tal cual.)
+- Las decisiones se descargan con el nombre del paquete (`figspec-menu-mobile.decisions.json`), normalmente en la misma carpeta: el extractor las encuentra solo, también la copia más reciente. `--no-decisions` genera sin ellas.
 
 Cada ejecución **reemplaza la salida anterior**: borra los archivos que el extractor generó la vez anterior (registrados en `.figspec-manifest.json`) y las carpetas que queden vacías, y no toca nada más, así que la salida puede vivir dentro de tu proyecto (por ejemplo `--out-dir src/components`).
 
@@ -187,11 +208,7 @@ El interruptor **Código** está apagado por defecto: así la vista sirve a quie
 Con **Código** prendido, el inspector tiene un campo **Nombre en código** para la capa elegida (o **Nombre del componente**, en la raíz) y muestra la clase que va a resultar. Los cambios se marcan con ✎ en el árbol y se juntan arriba del inspector; se guardan en el navegador, así no se pierden al recargar. Para aplicarlos:
 
 1. **Descargar decisiones** guarda `figspec-<nombre>.decisions.json` (mismo nombre que el paquete del plugin).
-2. Vuelve a generar la salida con ese archivo; el visualizador muestra el comando:
-
-   ```sh
-   node extractor.js figspec-menu-mobile.json --decisions figspec-menu-mobile.decisions.json --viewer
-   ```
+2. Déjalo junto al paquete (el navegador suele descargar los dos en la misma carpeta) y vuelve a generar con `npm start` o `node extractor.js figspec-menu-mobile.json --viewer`: el extractor lo encuentra solo. Si está en otro lugar, `--decisions <archivo>`.
 
 El archivo usa los id de Figma de cada capa, así que sigue valiendo si exportas de nuevo el mismo componente. Sus nombres ganan sobre los elegidos en el plugin (y `--name` gana sobre todo). Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos. **Quitar** descarta un cambio o, si ya estaba aplicado, lo saca del archivo para que el extractor vuelva a elegir el nombre.
 

@@ -12,7 +12,7 @@ const { execFileSync, spawnSync } = require("node:child_process");
 const client = require("../viewer-client");
 
 const ROOT = path.join(__dirname, "..");
-const ENV = { ...process.env, FIGMA_FROM: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
+const ENV = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
 
 let seq = 0;
 const box = (w, h, x = 0, y = 0) => ({ x, y, width: w, height: h });

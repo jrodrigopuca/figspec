@@ -955,7 +955,8 @@ function boot(doc, data) {
 	const decisionsBox = h("div", { class: "fv-decisions", role: "region", "aria-label": "Nombres cambiados" });
 	// Mismo nombre base que el paquete del plugin (figspec-menu-mobile.json → .decisions.json)
 	const bundleFile = (meta.source && meta.source.bundle) || `figspec-${spec.kebab(design.component.figmaName) || "componente"}.json`;
-	const fileName = bundleFile.replace(/\.json$/i, "") + ".decisions.json";
+	// Sin la marca de copia del navegador ("figspec-x (1).json"): el extractor lo busca por el original
+	const fileName = bundleFile.replace(/ ?\(\d+\)(?=\.json$)/i, "").replace(/\.json$/i, "") + ".decisions.json";
 	function download() {
 		const blob = new Blob([JSON.stringify(decisionsDoc(meta, pending), null, 2) + "\n"], { type: "application/json" });
 		const a = doc.createElement("a");
@@ -978,7 +979,7 @@ function boot(doc, data) {
 			const t = l && renameTarget(l);
 			rows.push({ from: t ? `.${t.current}` : id, to: v === null ? "(el que elija el extractor)" : `.${codeClass(v)}`, layer: find });
 		}
-		const cmd = `node extractor.js ${bundleFile} --decisions ${fileName}`;
+		const cmd = `node extractor.js ${bundleFile} --viewer`;
 		const copyBtn = h("button", { type: "button", class: "fv-link", text: "Copiar comando", onclick: () => copy(cmd, copyBtn) });
 		decisionsBox.replaceChildren(
 			h("h3", { text: `${n} nombre${n === 1 ? "" : "s"} cambiado${n === 1 ? "" : "s"}` }),
@@ -986,7 +987,7 @@ function boot(doc, data) {
 			h("div", { class: "fv-insp-tools" },
 				h("button", { type: "button", text: "Descargar decisiones", onclick: download }),
 				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); } })),
-			h("p", { class: "fv-hint" }, "Vuelve a generar la salida con el archivo: ", h("code", { text: cmd }), " ", copyBtn),
+			h("p", { class: "fv-hint" }, `Guarda ${fileName} junto al paquete y vuelve a generar (npm start, o `, h("code", { text: cmd }), "): el extractor lo encuentra solo. ", copyBtn),
 		);
 	}
 

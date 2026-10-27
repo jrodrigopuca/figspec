@@ -7,8 +7,9 @@
  * puede pasar a otra persona sin la carpeta.
  *
  * Uso:
- *   node viewer.js <carpeta de salida>        → <carpeta>/viewer.html
- *   node extractor.js figspec-x.json --viewer → lo mismo, al terminar la extracción
+ *   node viewer.js <carpeta de salida> [--open]  → <carpeta>/viewer.html (y lo abre)
+ *   node viewer.js --open                        → la carpeta de FIGMA_OUT_DIR (.env)
+ *   node extractor.js figspec-x.json --viewer    → lo mismo, al terminar la extracción
  *
  * El navegador reproduce el componente con los mismos .module.css (clases con el nombre del
  * componente como prefijo, para que no choquen los .root) y la misma interpretación de
@@ -17,6 +18,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { loadDefaultEnv, expandHome, openFile } = require("./env");
 
 // Versión de component.json que entiende el visualizador (meta.format)
 const FORMAT = 1;
@@ -169,9 +171,10 @@ function escapeHtml(s) {
 // Sin el extractor: escribe viewer.html y lo suma al manifiesto, si existe, para que la próxima
 // extracción lo reemplace o lo borre como al resto de la salida.
 function cli(argv) {
-	const outDir = argv.find((a) => !a.startsWith("--"));
+	loadDefaultEnv();
+	const outDir = argv.find((a) => !a.startsWith("--")) || expandHome(process.env.FIGMA_OUT_DIR);
 	if (!outDir || argv.includes("--help")) {
-		console.log("Uso: node viewer.js <carpeta de salida del extractor>\nEscribe <carpeta>/viewer.html (autocontenido).");
+		console.log("Uso: node viewer.js [carpeta de salida del extractor] [--open]\nEscribe <carpeta>/viewer.html (autocontenido); sin carpeta, usa FIGMA_OUT_DIR del .env.\n--open lo abre en el navegador.");
 		return outDir ? 0 : 1;
 	}
 	try {
@@ -192,6 +195,7 @@ function cli(argv) {
 	}
 	const kb = Math.round(fs.statSync(path.join(outDir, "viewer.html")).size / 1024);
 	console.error(`✔ ${path.join(outDir, "viewer.html")} (${kb} KB)`);
+	if (argv.includes("--open")) openFile(path.resolve(outDir, "viewer.html"));
 	return 0;
 }
 

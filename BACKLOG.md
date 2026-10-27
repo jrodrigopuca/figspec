@@ -172,6 +172,18 @@ carpeta aparte):
     respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif), en
     el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
     una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
+  - [x] Ir de una herramienta a otra con npm y `.env` (2026-10-27, pedido del usuario): `env.js`
+    compartido (carga del .env, `~`, copias del navegador, abrir archivos); scripts `npm start`
+    (extractor + visualizador + abrir), `npm run extract`, `npm run viewer`; `viewer.js` usa
+    `FIGMA_OUT_DIR` sin argumento y `--open`; el extractor usa la copia más reciente del paquete
+    cuando viene de `FIGMA_FROM` ("x (1).json"), encuentra solo `<paquete>.decisions.json`
+    (`--no-decisions`) y `--open`. Solo la marca de copia con paréntesis (Chrome, Firefox): un
+    "-2" puede ser parte del nombre. 5 pruebas en `test/env.test.js`.
+    _Prueba pendiente:_ cómo nombra Safari las descargas repetidas (si no usa paréntesis, no se
+    reconoce la copia) y `--open` (no se ejecutó en las pruebas porque abre el navegador; usa `open` en macOS,
+    `start` en Windows y `xdg-open` en Linux).
+    _Posible después:_ `npm run watch`, que vuelva a generar al aparecer un paquete o un archivo
+    de decisiones nuevo (con recarga del visualizador).
   - _Visualizador como editor (idea del usuario, 2026-10-27), lo que sigue:_
     1. _Futuro lejano (decidido por el usuario el 2026-10-27):_ llevar las decisiones a Figma
        ("Importar decisiones" en el plugin, con `setPluginData`). Escribir en el archivo de Figma
