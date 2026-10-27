@@ -180,6 +180,39 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   de un SVG (clipPath, mask) se repiten si el ícono aparece varias veces; los textos con saltos de
   línea se muestran en una línea (falta `white-space: pre-line`).
 
+## Nombres (plan revisado por architect, senior-dev y ux-ui)
+
+- [x] **Paso 0. Variante por defecto primero + separador de sufijo.**
+  `assemble()` recorre primero la variante por defecto (antes asignaba las clases en el orden de los
+  hijos del set), así los nombres no dependen del orden en Figma. Un sufijo numérico se separa si el
+  nombre termina en dígito: `frame1_2` (antes `frame12`, confundible con "Frame 12").
+  Ventana del plugin con los colores del tema de Figma (`themeColors`; en oscuro era blanca).
+- [x] **Paso 1. Sugerencias de nombres en el extractor + `--name`.**
+  Solo para capas con nombre vago (genérico de Figma, o texto cuyo contenido no sirve de nombre).
+  Contenedor con **un único** texto propio → texto + Item (si se repite, ≥3 hermanos con la misma
+  firma) / Row / Column / Box; ícono → texto vecino + Icon (archivo `texto.svg`), si no `icon`;
+  texto → `text`. Textos aptos: ≤3 palabras, con letras, sin emails/URLs/relleno. El mismo dibujo
+  junto a textos distintos vuelve al nombre neutro. La raíz nunca se renombra sola (`--name`, aviso).
+  Renombres listados en `meta.notes`. Probado con estructuras variadas (tarjeta, lista de usuarios,
+  formulario, pestañas, barra de íconos, grilla de precios, botón) en `test/naming.test.js`.
+  _Límite:_ las capas de texto conservan el nombre que les puso Figma aunque sea un dato de ejemplo
+  ("Juan Pérez" → `juanPerez`); distinguir dato de etiqueta requiere comparar repeticiones (paso 2/4).
+- [x] **Paso 2. Detectar estructuras repetidas** con `signature()` (la misma firma y el mismo umbral
+  que el sufijo `Item`) y reportarlas en `component.json` (`repeated`) y `meta.notes`: contenedor,
+  ítems, `varies` (qué cambia y dónde: propiedades CSS, `text`, `src`, `hidden`) y `styleGroups`
+  (ítems con estilos idénticos; el tamaño de los íconos no cuenta, depende del dibujo).
+  Solo contenedores con contenido (las instancias ya son un componente).
+  _Hallazgo en el menú real:_ 5 grupos en vez de 3 (activo / normal / deshabilitado) porque "Pack" y
+  "Logs" tienen otra tipografía (500 · 14px contra 700 · 12px): no tienen el estilo de texto
+  `default-bold`. Es una inconsistencia del diseño; el paso 4 tiene que decidir cómo tratarla.
+- [ ] **Paso 3. Ventana del plugin**: raíz fijada (clic para ubicar no debe cambiarla), lista solo
+  de nombres vagos con la sugerencia como placeholder, ⌖ para centrar la capa sin seleccionarla, y
+  los renombres enviados por **id** en el paquete (`figspec: 2`, `names.byId`); el extractor los
+  traduce a rutas (no se duplica la lógica de rutas en el plugin).
+- [ ] **Paso 4. Con el menú real (`figspec-menu.json`)**: clase compartida para repetidos (`.item`),
+  subcomponente (`MenuItem`) con props `label`/`icon`/`state` y estados deducidos (opacidad < 1 →
+  `disabled`, relleno que contrasta → `active`), con `aria-current`/`aria-disabled`.
+
 ## P3
 
 - [x] Encabezado y `printHelp` dicen `figma-extract.js`; el archivo es `extractor.js`.

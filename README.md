@@ -40,6 +40,7 @@ figma-menu/                  carpeta de salida
 | Parámetro | Variable en `.env` | Efecto |
 |---|---|---|
 | `<archivo>` (o `--from <archivo>`) | `FIGMA_FROM` | Paquete exportado con el plugin |
+| `--name <Nombre>` | `FIGMA_NAME` | Nombre del componente en código (si en Figma se llama "Frame 1") |
 | `--out-dir <dir>` | `FIGMA_OUT_DIR` | Carpeta de salida (por defecto `figma-<componente>/`) |
 | `--no-assets` / `--assets` | `FIGMA_ASSETS` | Escribe íconos e imágenes (activado por defecto) |
 | `--no-png` / `--png` | `FIGMA_PNG` | Escribe `preview.png` (activado por defecto) |
@@ -52,6 +53,23 @@ Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.
 Cada ejecución **reemplaza la salida anterior**: borra los archivos que el extractor generó la vez anterior (registrados en `.figspec-manifest.json`) y las carpetas que queden vacías, y no toca nada más, así que la salida puede vivir dentro de tu proyecto (por ejemplo `--out-dir src/components`).
 
 El extractor también acepta una respuesta guardada de `GET /v1/files/:key/nodes` de la API REST, sin íconos ni imágenes.
+
+### Nombres
+
+Las clases, los íconos y los componentes toman el nombre de las capas de Figma. Cuando una capa tiene un nombre que no dice nada ("Frame 5", "Group 1", "icon", o un texto cuyo contenido no sirve de nombre como "$1.200"), el extractor propone uno a partir del texto cercano:
+
+| En Figma | En código |
+|---|---|
+| Frame con un único texto ("Benefits"), repetido entre sus hermanos | `benefitsItem` |
+| Frame con un único texto, sin repetir | `emailColumn` / `iniciarSesionRow` (según su auto layout) |
+| Ícono junto a un texto ("Descargar") | clase `descargarIcon`, archivo `descargar.svg` |
+| Ícono sin texto cerca | `icon`, `icon2`… |
+| Texto que no sirve de nombre ("$1.200", "••••", un párrafo, un email) | `text`, `text2`… |
+| Frame con dos o más textos (título y descripción, nombre y email) | se conserva ("frame11"): es contenido, no una etiqueta |
+
+- Los nombres puestos por el diseñador no se tocan; los renombres quedan listados en `meta.notes`. Para otro nombre, renombra la capa en Figma.
+- El componente raíz **nunca** se renombra solo: si se llama "Frame 1", el extractor avisa y lo eliges con `--name`.
+- En un set de variantes, los nombres salen de la variante por defecto.
 
 ## Componentes React
 
@@ -78,6 +96,13 @@ import { Card } from "./components/Card"; // la subcarpeta copiada a tu proyecto
 - Las instancias de otros componentes reciben su ubicación (tamaño, flex, posición) vía `className` desde el módulo del padre.
 - Los íconos monocromos usan `currentColor`: su color sale de `color` en CSS, siempre que el SVG vaya inline (por ejemplo, con SVGR).
 - `component.json` incluye `meta.notes` con las convenciones y aproximaciones aplicadas a ese componente.
+- `repeated` señala grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas): qué cambia entre ellos (`varies`) y cuáles comparten estilos (`styleGroups`, posibles estados). Son candidatos a un subcomponente con `items.map(...)`, y sirven para detectar inconsistencias del diseño.
+
+## Pruebas
+
+```sh
+npm test    # node --test test/, sin dependencias
+```
 
 ## Estado
 

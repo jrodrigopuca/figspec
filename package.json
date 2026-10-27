@@ -5,6 +5,9 @@
   "bin": {
     "figspec": "extractor.js"
   },
+  "scripts": {
+    "test": "node --test test/"
+  },
   "files": [
     "extractor.js",
     "react.js",

@@ -15,6 +15,7 @@
  *
  * Opciones (parámetro > variable de entorno > .env > valor por defecto):
  *   <archivo>         Paquete del plugin (o respuesta de /v1/files/:key/nodes).   FIGMA_FROM
+ *   --name <Nombre>   Nombre del componente en código (si en Figma es "Frame 1"). FIGMA_NAME
  *   --out-dir <dir>   Carpeta de salida (por defecto: figma-<componente>/).       FIGMA_OUT_DIR
  *   --no-assets       No escribe íconos ni imágenes.                              FIGMA_ASSETS=false
  *   --no-png          No escribe preview.png.                                     FIGMA_PNG=false
@@ -72,6 +73,7 @@ function loadEnv(files) {
 // Valores por defecto desde el entorno (.env incluido); los parámetros los anulan.
 const opts = {
 	from: process.env.FIGMA_FROM || null,
+	name: process.env.FIGMA_NAME || null,
 	outDir: process.env.FIGMA_OUT_DIR || null,
 	css: envFlag("FIGMA_CSS", true),
 	assets: envFlag("FIGMA_ASSETS", true),
@@ -93,6 +95,7 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--react") opts.react = true;
 	else if (a === "--no-react") opts.react = false;
 	else if (a === "--out-dir") opts.outDir = argv[++i];
+	else if (a === "--name") opts.name = argv[++i];
 	else if (a === "--from" || a === "--json") opts.from = argv[++i];
 	else if (a === "-h" || a === "--help") {
 		printHelp();
@@ -122,6 +125,8 @@ const ctx = {
 	subs: new Map(),
 	shallowSubs: new Map(), // id de componente → nombre en código (con --shallow)
 	codeNames: new Set(), // nombres de componente ya usados (en minúsculas: archivos en macOS/Windows)
+	renamed: new Map(), // clase sugerida → nombre genérico de Figma (para avisar en notes)
+	elSignature: new WeakMap(), // elemento de structure → firma estructural de su capa
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
 	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
@@ -171,8 +176,18 @@ function main() {
 
 	const root = entry.document;
 	const component = buildRoot(root);
+	// La raíz nunca se renombra sola: es el nombre público del componente
+	if (!opts.name && isGeneric(component.figmaName)) {
+		const msg = `El componente se llama "${component.figmaName}" en Figma: dale un nombre con --name (p. ej. --name SideMenu).`;
+		console.error(`… ${msg}`);
+		ctx.notes.add(msg);
+	}
 	const subcomponents = buildSubs();
 	ctx.rootComponent = component;
+	for (const comp of [component, ...Object.values(subcomponents)]) {
+		const rep = findRepeated(comp);
+		if (rep.length) comp.repeated = rep;
+	}
 
 	const result = {
 		meta: {
@@ -359,10 +374,20 @@ function buildRoot(root) {
 // code: nombre en código ya reservado (subcomponentes); la raíz reserva el suyo antes de recorrer
 // el árbol, así ningún subcomponente puede quitárselo.
 function assemble(name, props, variants, defaults, isSub, code) {
-	if (!isSub) code = codeName(name);
+	if (!isSub) code = codeName(opts.name || name);
 	// Compartido entre variantes: la misma ruta de capas recibe la misma clase en todas.
 	const reg = { byPath: new Map(), taken: new Set(["root"]) };
-	const built = variants.map((v) => {
+	let d = variants.findIndex((v) =>
+		Object.entries(defaults || {}).every(([k, val]) => v.props[k] === val),
+	);
+	if (d < 0) d = 0;
+	// La variante por defecto se recorre primero: ella decide los nombres de clase (y sus
+	// sugerencias), así no dependen del orden de las variantes en Figma. `built` conserva el orden.
+	const built = new Array(variants.length);
+	for (const i of [d, ...variants.keys()].filter((i, k, a) => a.indexOf(i) === k))
+		built[i] = buildVariant(variants[i]);
+
+	function buildVariant(v) {
 		const state = {
 			styles: {},
 			classes: new Set(),
@@ -389,17 +414,12 @@ function assemble(name, props, variants, defaults, isSub, code) {
 			texts: state.texts,
 			bound: state.bound,
 		};
-	});
+	}
 
 	// props referenciadas por capas pero no declaradas (p. ej. si solo tenemos una instancia)
 	for (const b of built)
 		for (const [k, t] of Object.entries(b.bound))
 			if (!props[k]) props[k] = { type: t };
-
-	let d = built.findIndex((b) =>
-		Object.entries(defaults || {}).every(([k, v]) => b.props[k] === v),
-	);
-	if (d < 0) d = 0;
 
 	const res = { name: code, figmaName: name, props };
 	ctx.instanceClasses.set(
@@ -538,7 +558,7 @@ function buildSubs() {
 function codeName(figmaName) {
 	const base = pascal(figmaName) || "Componente";
 	let name = base;
-	for (let n = 2; ctx.codeNames.has(name.toLowerCase()); n++) name = `${base}${n}`;
+	for (let n = 2; ctx.codeNames.has(name.toLowerCase()); n++) name = numbered(base, n);
 	ctx.codeNames.add(name.toLowerCase());
 	if (name !== base)
 		ctx.notes.add(
@@ -602,7 +622,16 @@ function walk(node, parent, pctx, state, root, path = "") {
 		);
 
 	const el = { name: node.name };
-	el.className = isRoot ? "root" : classFor(node.name, path, state.reg);
+	ctx.elSignature.set(el, signature(node));
+	const iconLike = !isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node));
+	el.className = isRoot
+		? "root"
+		: classFor(
+				node.name,
+				path,
+				state.reg,
+				vagueName(node) ? () => suggestName(node, parent, iconLike) : null,
+			);
 	state.classes.add(el.className);
 	if (node.visible === false) el.hidden = true;
 
@@ -642,7 +671,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 
 	// Íconos y vectores → un solo <svg>
 	if (!isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node))) {
-		const icon = iconFor(node);
+		const icon = iconFor(node, parent);
 		el.tag = "svg";
 		el.icon = icon.name;
 		el.src = icon.file;
@@ -1322,9 +1351,18 @@ function fontCss(s, fills) {
 // ---------------------------------------------------------------- íconos
 // Un archivo por componente de ícono (incluida su variante) o por vector suelto.
 // La clave no puede ser el nombre: variantes de un set y capas "Vector" lo comparten.
-function iconFor(node) {
+// Las instancias toman el nombre de su componente ("Icon/Dashboard"). Los vectores sueltos con
+// nombre genérico ("icon") toman el texto vecino: dashboard.svg.
+function iconFor(node, parent) {
 	let key = node.id,
-		name = node.name;
+		name = node.name,
+		suggested = false;
+	// Nombre neutro: el de la capa, o "icon" si es genérico ("Group 1", "Vector")
+	const layer = isGeneric(node.name) ? "icon" : node.name;
+	if (node.type !== "INSTANCE" && isGeneric(node.name)) {
+		const near = textNear(node, parent);
+		[name, suggested] = near ? [near, true] : [layer, false];
+	}
 	if (node.type === "INSTANCE" && node.componentId) {
 		key = node.componentId;
 		const c = ctx.components[node.componentId];
@@ -1339,7 +1377,7 @@ function iconFor(node) {
 		ctx.iconFiles.set(file, n);
 		if (n > 1) file += `-${n}`;
 		const pal = vectorPalette(node);
-		icon = { name, id: node.id, file: `assets/icons/${file}.svg` };
+		icon = { name, id: node.id, file: `assets/icons/${file}.svg`, suggested, layer };
 		if (pal && pal.size === 1) icon.hex = [...pal][0]; // color exportado, a reemplazar por currentColor
 		ctx.icons.set(key, icon);
 	}
@@ -1551,6 +1589,16 @@ function notes(subs) {
 		n.push(
 			'Íconos: los monocromos usan currentColor en el SVG y su color se define con `color` en CSS; solo funciona si el SVG va inline (p. ej. SVGR), no con <img>. Los marcados "multicolor" conservan sus colores.',
 		);
+	if ([ctx.rootComponent, ...Object.values(subs)].some((s) => s && s.repeated))
+		n.push(
+			'repeated: grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas). "varies" dice qué cambia entre ellos, por clase del primero: propiedades CSS, "text", "src" (ícono) o "hidden"; "styleGroups" agrupa los que tienen estilos idénticos (posibles estados: activo, deshabilitado…). Son candidatos a un subcomponente renderizado con items.map(...).',
+		);
+	if (ctx.renamed.size) {
+		const list = [...ctx.renamed].map(([cls, from]) => `${from} → ${cls}`);
+		n.push(
+			`Capas con nombre genérico renombradas (según su texto o su tipo): ${list.slice(0, 12).join(", ")}${list.length > 12 ? `… (${list.length})` : ""}. Para otro nombre, renómbralas en Figma.`,
+		);
+	}
 	if (ctx.unnamedVars)
 		n.push(
 			"Hay valores enlazados a variables cuyo nombre no se pudo leer (la API de variables requiere plan Enterprise); se usan los valores directos.",
@@ -1640,22 +1688,36 @@ function writeAssets(outDir, part) {
 		// Capas sueltas con el mismo dibujo tienen ids distintos: se unifican por contenido
 		// (ya con currentColor, así que el color tampoco las separa). Los números se comparan
 		// redondeados a 0.01: una copia desplazada una fracción de píxel cambia la 5.ª decimal.
-		const byContent = new Map();
+		const groups = new Map(); // forma → íconos con ese dibujo
 		const shape = (svg) => svg.replace(/-?\d*\.\d+/g, (n) => String(rd(+n)));
 		for (const icon of ctx.icons.values()) {
 			const buf = raw.get(icon.id);
 			if (!buf) continue;
-			let svg = buf.toString("utf8");
-			if (icon.hex) svg = toCurrentColor(svg, icon.hex);
-			const same = byContent.get(shape(svg));
-			if (same) {
-				iconRename[icon.file] = same;
-				icon.file = same;
-				continue;
+			icon.svg = buf.toString("utf8");
+			if (icon.hex) icon.svg = toCurrentColor(icon.svg, icon.hex);
+			const k = shape(icon.svg);
+			if (!groups.has(k)) groups.set(k, []);
+			groups.get(k).push(icon);
+		}
+		const taken = new Set([...ctx.icons.values()].map((i) => i.file));
+		for (const group of groups.values()) {
+			let file = group[0].file;
+			// El mismo dibujo junto a textos distintos (Benefits, Logs…): un nombre sugerido sería
+			// engañoso para los demás, así que el archivo vuelve al nombre de la capa ("icon").
+			if (new Set(group.map((i) => i.file)).size > 1 && group.some((i) => i.suggested)) {
+				for (const i of group) taken.delete(i.file);
+				const base = kebab(group[0].layer) || "icon";
+				file = `assets/icons/${base}.svg`;
+				for (let n = 2; taken.has(file); n++) file = `assets/icons/${base}-${n}.svg`;
+				taken.add(file);
+				for (const i of group) i.name = group[0].layer;
 			}
-			byContent.set(shape(svg), icon.file);
-			fs.writeFileSync(path.join(dir, icon.file), svg);
-			ctx.generated.add(`${part}/${icon.file}`);
+			for (const icon of group) {
+				if (icon.file !== file) iconRename[icon.file] = file;
+				icon.file = file;
+			}
+			fs.writeFileSync(path.join(dir, file), group[0].svg);
+			ctx.generated.add(`${part}/${file}`);
 		}
 	}
 	if (ctx.imageRefs.size) {
@@ -1689,17 +1751,200 @@ function imageExt(buf) {
 // ---------------------------------------------------------------- utilidades
 // Una clase por ruta de capas (no por orden de recorrido): una capa extra en una variante
 // no corre la numeración del resto.
-function classFor(name, path, reg) {
+// suggest: nombre alternativo (función perezosa) para capas con nombre vago (ver vagueName);
+// se calcula solo la primera vez que aparece la ruta, que es en la variante por defecto.
+function classFor(name, path, reg, suggest) {
 	let cls = reg.byPath.get(path);
 	if (cls) return cls;
-	let base = camel(name) || "el";
+	const better = suggest ? suggest() : null;
+	let base = camel(better || name) || "el";
 	if (/^[0-9]/.test(base)) base = "el" + base;
 	if (base === "root") base = "rootEl";
 	cls = base;
-	for (let n = 2; reg.taken.has(cls); n++) cls = `${base}${n}`;
+	for (let n = 2; reg.taken.has(cls); n++) cls = numbered(base, n);
 	reg.taken.add(cls);
 	reg.byPath.set(path, cls);
+	if (better && camel(better) !== camel(name)) ctx.renamed.set(cls, name); // "Icon" → icon no es renombre
 	return cls;
+}
+
+// Agrega un número si el nombre ya está tomado (icon → icon2). Si el nombre termina en dígito
+// se separa (frame1 → frame1_2), para no confundirlo con una capa "Frame 12".
+function numbered(base, n) {
+	return /\d$/.test(base) ? `${base}_${n}` : `${base}${n}`;
+}
+
+// ---------------------------------------------------------------- nombres sugeridos
+// Nombres que Figma pone por defecto (o equivalentes) y no dicen qué es la capa
+const GENERIC =
+	/^(frame|group|rectangle|vector|ellipse|line|polygon|star|union|subtract|intersect|exclude|image|component|instance|auto layout|icon|ic|svg|shape)(\s*\d+)?$/i;
+
+function isGeneric(name) {
+	return GENERIC.test(String(name).trim());
+}
+
+// Nombre que no sirve para el código: genérico de Figma ("Frame 5"), o un texto que Figma nombró
+// con su contenido cuando ese contenido no sirve de nombre ("$1.200", "••••", un párrafo, un email).
+function vagueName(node) {
+	if (isGeneric(node.name)) return true;
+	const chars = node.type === "TEXT" ? String(node.characters || "").trim() : null;
+	return chars !== null && String(node.name).trim() === chars && !usableText(chars);
+}
+
+// Nombre para una capa con nombre vago, a partir del texto que tiene cerca:
+//   texto → "text" (su contenido no sirve de nombre)
+//   ícono → texto hermano + "Icon" (dashboardIcon), o "icon" si no hay texto
+//   contenedor → su único texto propio + rol: Item si se repite entre sus hermanos, si no
+//                Row/Column/Box. Con dos o más textos propios es contenido (título y descripción,
+//                nombre y email): nombrarlo por el primero sería engañoso.
+// null → se queda el nombre de Figma.
+function suggestName(node, parent, iconLike) {
+	if (node.type === "TEXT") return "text";
+	if (iconLike) {
+		const near = textNear(node, parent);
+		return near ? `${near} Icon` : "icon";
+	}
+	const text = ownChildText(node);
+	if (!text) return null;
+	const role = repeated(node, parent)
+		? "Item"
+		: { HORIZONTAL: "Row", VERTICAL: "Column" }[node.layoutMode] || "Box";
+	return `${text} ${role}`;
+}
+
+// Texto apto para un nombre: hasta 3 palabras y con letras. Descarta números, precios y fechas,
+// emails y URLs, relleno ("Lorem ipsum") y frases largas, que suelen ser datos de ejemplo.
+// No se recorta: "Título de la tarjeta" daría "títuloDeLa".
+function usableText(s) {
+	const t = String(s || "").replace(/\s+/g, " ").trim();
+	if (!t || /lorem ipsum|@|:\/\//i.test(t) || !/\p{L}/u.test(t)) return null;
+	return t.split(" ").length > 3 ? null : t;
+}
+
+// Un texto visible cuyo contenido es del diseño (no el valor por defecto de una prop)
+function ownText(n) {
+	return (
+		n.type === "TEXT" &&
+		n.visible !== false &&
+		!(n.componentPropertyReferences || {}).characters &&
+		usableText(n.characters)
+	);
+}
+
+// Solo hijos directos: un texto más profundo pertenece a un contenedor interior, que ya lo usará
+// (si no, un frame y el que lleva adentro terminarían llamándose igual: userRow, userRow2).
+// Cuentan todos los textos visibles, sirvan o no de nombre: "Juan Pérez" + "juan@mail.com" sigue
+// siendo contenido aunque el email no sirva.
+function ownChildText(node) {
+	const texts = (node.children || []).filter(
+		(c) => c.type === "TEXT" && c.visible !== false,
+	);
+	return texts.length === 1 ? ownText(texts[0]) || null : null;
+}
+
+// El texto hermano más cercano (primero el siguiente, después el anterior)
+function textNear(node, parent) {
+	const sibs = (parent && parent.children) || [];
+	const i = sibs.indexOf(node);
+	for (let d = 1; d < sibs.length; d++)
+		for (const j of [i + d, i - d]) {
+			const t = sibs[j] && ownText(sibs[j]);
+			if (t) return t;
+		}
+	return null;
+}
+
+// Firma estructural: tipos, auto layout y forma del árbol, sin textos, colores ni el dibujo de
+// los íconos. Hermanos con la misma firma son el mismo patrón (p. ej. los ítems de un menú).
+const signatures = new WeakMap();
+function signature(n) {
+	if (signatures.has(n)) return signatures.get(n);
+	let s;
+	if (n.type === "TEXT") s = "T";
+	else if (VECTOR_TYPES.has(n.type) || isIconish(n)) s = "I";
+	else
+		s = `${n.type}:${n.layoutMode || ""}(${(n.children || [])
+			.filter((c) => c.visible !== false)
+			.map(signature)
+			.join(",")})`;
+	signatures.set(n, s);
+	return s;
+}
+
+// ---------------------------------------------------------------- estructuras repetidas
+// Hermanos con la misma firma (≥ REPEAT_MIN) son el mismo patrón repetido: los ítems de un menú,
+// las filas de una lista, las tarjetas de una grilla. Se reportan en component.json (`repeated`)
+// con lo que varía entre ellos, como base para extraerlos a un subcomponente.
+function findRepeated(comp) {
+	const out = [];
+	(function visit(el) {
+		const groups = new Map();
+		for (const k of el.children || []) {
+			// Solo contenedores con contenido: las instancias ya son un componente, y varios
+			// textos o íconos sueltos seguidos no forman un patrón
+			if (!(k.children || []).length) continue;
+			const s = ctx.elSignature.get(k);
+			if (!groups.has(s)) groups.set(s, []);
+			groups.get(s).push(k);
+		}
+		for (const items of groups.values())
+			if (items.length >= REPEAT_MIN) out.push(describeRepeated(el, items, comp));
+		(el.children || []).forEach(visit);
+	})(comp.structure);
+	return out;
+}
+
+// Qué cambia entre las repeticiones, recorriéndolas en paralelo (misma firma = misma forma):
+//   varies: clase (del primer ítem) → propiedades CSS que cambian, más "text", "src" (ícono)
+//           y "hidden" si cambian el contenido, el ícono o la visibilidad
+//   styleGroups: ítems con estilos idénticos; si hay más de uno, son candidatos a estados
+//                (p. ej. activo / normal / deshabilitado)
+function describeRepeated(parent, items, comp) {
+	const styleOf = (el) => (comp.styles || {})[el.className] || {};
+	const content = (el) =>
+		el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
+	const varies = {};
+	(function compare(els) {
+		const first = els[0];
+		const props = new Set(els.flatMap((e) => Object.keys(styleOf(e))));
+		const changed = [...props].filter(
+			(p) => new Set(els.map((e) => styleOf(e)[p])).size > 1,
+		);
+		if (first.tag === "span" && new Set(els.map(content)).size > 1) changed.push("text");
+		if (first.tag === "svg" && new Set(els.map((e) => e.src)).size > 1) changed.push("src");
+		if (new Set(els.map((e) => !!e.hidden)).size > 1) changed.push("hidden");
+		if (changed.length) varies[first.className] = changed;
+		const n = Math.min(...els.map((e) => (e.children || []).length));
+		for (let i = 0; i < n; i++) compare(els.map((e) => e.children[i]));
+	})(items);
+
+	// El tamaño de un ícono depende de su dibujo, no del estado: no cuenta para agrupar
+	const styleKey = (el) => {
+		const all = [];
+		(function collect(e) {
+			const { width, height, ...rest } = styleOf(e);
+			all.push(e.tag === "svg" ? rest : styleOf(e));
+			(e.children || []).forEach(collect);
+		})(el);
+		return JSON.stringify(all);
+	};
+	const groups = new Map();
+	for (const it of items) {
+		const k = styleKey(it);
+		if (!groups.has(k)) groups.set(k, []);
+		groups.get(k).push(it.className);
+	}
+	const rep = { parent: parent.className, items: items.map((e) => e.className) };
+	if (Object.keys(varies).length) rep.varies = varies;
+	if (groups.size > 1) rep.styleGroups = [...groups.values()];
+	return rep;
+}
+
+// Al menos 3 hermanos (contándose) con la misma firma
+const REPEAT_MIN = 3;
+function repeated(node, parent) {
+	const sibs = ((parent && parent.children) || []).filter((c) => c.visible !== false);
+	return sibs.filter((c) => signature(c) === signature(node)).length >= REPEAT_MIN;
 }
 
 function words(s) {
@@ -1745,12 +1990,12 @@ function px(n) {
 }
 
 function printHelp() {
-	console.log(`Uso: node extractor.js figspec-<nombre>.json [--react] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
+	console.log(`Uso: node extractor.js figspec-<nombre>.json [--name Nombre] [--react] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
 
 El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
 También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
 
-Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_OUT_DIR,
+Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_OUT_DIR,
   FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT (true/false).
 --react genera además componentes React en TypeScript (.tsx), uno por componente.
 Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
