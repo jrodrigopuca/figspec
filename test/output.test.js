@@ -235,3 +235,52 @@ test("inconsistencias: texto con los valores de un estilo de texto sin aplicarlo
 test("inconsistencias: sin ninguna no se escribe el archivo", () => {
 	assert.equal(report(extract(F("Card", "VERTICAL", [T("Hola")]))), null);
 });
+
+// ---------------------------------------------------------------- meta.format y meta.preview
+// PNG mínimo: solo la firma y el encabezado IHDR con el tamaño (lo único que se lee)
+function fakePng(w, h) {
+	const b = Buffer.alloc(24);
+	Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+	b.writeUInt32BE(13, 8);
+	b.write("IHDR", 12, "ascii");
+	b.writeUInt32BE(w, 16);
+	b.writeUInt32BE(h, 20);
+	return b.toString("base64");
+}
+const pluginBundle = (doc, preview) => ({
+	figspec: 2, name: doc.name, nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z",
+	icons: {}, images: {}, variables: {}, preview, nodes: { [doc.id]: { document: doc } },
+});
+
+test("meta.format siempre; meta.preview no sin vista previa", () => {
+	const r = extract(F("Card", "VERTICAL", [T("Hola")]));
+	assert.equal(r.spec.meta.format, 1);
+	assert.equal(r.spec.meta.preview, undefined);
+});
+
+test("meta.preview: la sombra agranda la imagen y desplaza el componente", () => {
+	const doc = F("Menu", "VERTICAL", [T("Hola")], {
+		absoluteBoundingBox: { x: 100, y: 50, width: 320, height: 900 },
+		absoluteRenderBounds: { x: 84, y: 38, width: 344, height: 924 },
+	});
+	const r = extract(pluginBundle(doc, fakePng(344, 924)));
+	assert.deepEqual(r.spec.meta.preview, { file: "preview.png", width: 344, height: 924, scale: 1, offset: { x: 16, y: 12 } });
+	assert.ok(fs.existsSync(path.join(r.out, "preview.png")));
+});
+
+test("meta.preview: en un set, la posición de la variante por defecto dentro de la imagen del set", () => {
+	const variant = (name, x) => ({ id: `${++seq}:1`, name, type: "COMPONENT", layoutMode: "HORIZONTAL", absoluteBoundingBox: { x, y: 20, width: 100, height: 40 }, children: [T("Ok")] });
+	const set = {
+		id: `${++seq}:1`, name: "Button", type: "COMPONENT_SET",
+		absoluteBoundingBox: { x: 0, y: 0, width: 260, height: 80 }, absoluteRenderBounds: { x: 0, y: 0, width: 260, height: 80 },
+		componentPropertyDefinitions: { State: { type: "VARIANT", defaultValue: "Hover", variantOptions: ["Default", "Hover"] } },
+		children: [variant("State=Default", 20), variant("State=Hover", 140)],
+	};
+	const r = extract(pluginBundle(set, fakePng(520, 160)));
+	assert.deepEqual(r.spec.meta.preview, { file: "preview.png", width: 520, height: 160, scale: 2, offset: { x: 280, y: 40 } }, "variante Hover en x=140 y=20, imagen @2x");
+});
+
+test("meta.preview: con --no-png no se incluye", () => {
+	const doc = F("Card", "VERTICAL", [T("Hola")]);
+	assert.equal(extract(pluginBundle(doc, fakePng(200, 100)), ["--no-png"]).spec.meta.preview, undefined);
+});

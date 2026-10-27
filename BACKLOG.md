@@ -90,6 +90,39 @@ carpeta aparte):
   de props según la variante, solo se reportan. En el padre con variantes no se usa `items.map`
   (cada ítem tiene su clase para `variantProps`).
 
+- [ ] **Visualizador** (diseño revisado por ux-ui y architect; decisiones aprobadas el 2026-10-26).
+  `viewer.html` autocontenido para comparar el componente generado con la `preview.png` de Figma y
+  entender qué se generó. Lo usan dev y UX (doble clic).
+  _Decidido (2026-10-26):_ no se genera siempre; archivo propio (separado del extractor); primera
+  entrega = fases 1 y 2.
+  _Diseño (ux-ui):_ tres zonas fijas (árbol · lienzo · inspector); modos Render / Figma / Lado a
+  lado / Superponer (parpadeo con Espacio) / Diferencia (mix-blend-mode, "Realzar"); clic en el
+  lienzo selecciona la capa en cualquier modo y su caja se dibuja también sobre la preview; árbol con
+  nombre de Figma o clase, instancias ◆, renombres; inspector con caja medida y CSS por origen
+  (base, variante, ubicación desde el padre) con tokens como chips; interruptor "Código" apagado
+  por defecto (vista para UX); avisos de integridad (fuentes no instaladas, preview translúcida).
+  _Arquitectura (architect):_ `viewer.js` (Node: CLI `node viewer.js <salida>` y
+  `generateViewer()` para `--viewer` del extractor; se registra en el manifiesto) +
+  `viewer-client.js` (navegador, probable en Node). Fidelidad: el CSS es el de los `.module.css`
+  ya escritos, solo con clases prefijadas (un solo intérprete: el navegador), render en Shadow DOM;
+  la lógica de estructura se comparte con `react.js` extrayendo un `spec.js` (salida de react.js
+  idéntica byte a byte) más prueba de paridad de condiciones. Alineación exacta con
+  `meta.preview` (offset = caja del nodo − absoluteRenderBounds, × escala; verificado: menu mobile
+  offset 16,12 en 344×924 = preview.png; login 0,0 en 1440×900). `meta.format: 1` en component.json. Pruebas con node --test (render,
+  prefijado de CSS, paridad, integración, hit-test); captura visual manual opcional.
+  _Plan:_ ~~1 meta.format/meta.preview~~ (hecho: `meta.format: 1` siempre, `meta.preview` con el
+  PNG del plugin; salida idéntica a la anterior fuera de `meta`) · 2 spec.js · 3 esqueleto viewer.js · 4 render real (validar
+  con menu mobile y login antes de seguir) · 5 comparación · 6 árbol + hit-test · 7 inspector ·
+  8 aviso de fuentes + README.
+  _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
+  lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de
+  variantes/props; preview por variante (`figspec: 3`).
+  _Decisiones (aprobadas el 2026-10-26):_ (1) dos archivos viewer.js + viewer-client.js; (2) refactor de react.js
+  a spec.js; (3) meta.format y meta.preview en component.json; (4) viewer.html siempre
+  autocontenido (~3 MB en el login); (5) sin Google Fonts al principio; (6) figmaBox en
+  figma-geometry.json, en 2b; (7) recortes al diseño (panel "Diseño en idioma Figma", ajuste
+  manual, punto ámbar, filtro del árbol, apilado automático); (8) preview por variante = figspec 3.
+  _Límite:_ reproduce el componente desde la misma especificación (mismo CSS), no ejecuta React.
 **Límites conocidos**
 - [ ] `id` internos de un SVG (clipPath, mask) repetidos si el ícono aparece varias veces.
 - [ ] Props de tipo swap: solo se pasan si el componente referido también se generó, y muestran el

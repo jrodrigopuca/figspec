@@ -41,6 +41,8 @@ const VECTOR_TYPES = new Set([
 	"REGULAR_POLYGON",
 ]);
 const ABSENT = Symbol("absent");
+// Versión del formato de component.json (meta.format). Subirla si cambia de forma incompatible.
+const COMPONENT_FORMAT = 1;
 // Espacio que el borde CSS ocupa hacia adentro en cada lado (se descuenta de padding y offsets)
 const NO_INSET = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 const allSides = (w) => ({ top: w, right: w, bottom: w, left: w });
@@ -227,13 +229,13 @@ function main() {
 		ctx.notes.add(msg);
 	}
 
-	const result = {
-		meta: {
-			source: { file: ctx.fileKey, node: nodeId },
-			notes: notes(subcomponents),
-		},
-		component,
-	};
+	// Versión del formato de component.json: la exigen sus consumidores (p. ej. el visualizador)
+	const meta = { format: COMPONENT_FORMAT, source: { file: ctx.fileKey, node: nodeId } };
+	// Solo si se escribe preview.png (paquete del plugin con vista previa y sin --no-png)
+	const preview = opts.png && previewMeta(root);
+	if (preview) meta.preview = preview;
+	meta.notes = notes(subcomponents);
+	const result = { meta, component };
 	if (Object.keys(subcomponents).length) result.subcomponents = subcomponents;
 	if (ctx.shallowSubs.size)
 		result.externalComponents = [...ctx.shallowSubs.values()];
@@ -377,6 +379,48 @@ function bundleAssets(kind, ids) {
 
 
 // ---------------------------------------------------------------- componentes y variantes
+// Nodo que se renderiza como raíz: la raíz o, en un set, la variante por defecto (como assemble)
+function renderedRoot(root) {
+	if (root.type !== "COMPONENT_SET") return root;
+	const defs = defaultVariant(root.componentPropertyDefinitions || {});
+	const variants = (root.children || []).filter(
+		(c) => c.type === "COMPONENT" && c.visible !== false,
+	);
+	return (
+		variants.find((v) =>
+			Object.entries(defs).every(([k, val]) => parseVariantName(v.name)[k] === val),
+		) ||
+		variants[0] ||
+		root
+	);
+}
+
+// Dónde está el componente dentro de preview.png, para compararlos superpuestos. La imagen es lo
+// que Figma dibuja del nodo exportado (absoluteRenderBounds: incluye sombras y, en un set, todas
+// las variantes); el componente es la caja del nodo que se renderiza.
+function previewMeta(root) {
+	const b64 = ctx.bundle && ctx.bundle.preview;
+	if (!b64) return null;
+	const png = Buffer.from(b64, "base64");
+	if (png.toString("ascii", 1, 4) !== "PNG") return null;
+	const width = png.readUInt32BE(16);
+	const height = png.readUInt32BE(20);
+	const drawn = root.absoluteRenderBounds || root.absoluteBoundingBox;
+	const box = renderedRoot(root).absoluteBoundingBox;
+	if (!drawn || !box || !drawn.width) return null;
+	const scale = rd(width / drawn.width);
+	ctx.notes.add(
+		"meta.preview: preview.png es lo que Figma dibuja del nodo exportado (incluye sombras y, en un set, todas las variantes); offset es la posición del componente dentro de la imagen, en píxeles de la imagen (scale = píxeles por px de Figma).",
+	);
+	return {
+		file: "preview.png",
+		width,
+		height,
+		scale,
+		offset: { x: rd((box.x - drawn.x) * scale), y: rd((box.y - drawn.y) * scale) },
+	};
+}
+
 function buildRoot(root) {
 	if (root.type === "COMPONENT_SET") {
 		const defs = root.componentPropertyDefinitions || {};
