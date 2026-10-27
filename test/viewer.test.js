@@ -290,3 +290,20 @@ test("render: cada nodo sabe de qué componente y capa viene", () => {
 	assert.equal(tagRoot.instance.el.className, "tag");
 	assert.equal(tagRoot.instance.parent, "Card");
 });
+
+// ---------------------------------------------------------------- comparación
+test("modos: lado a lado duplica el ancho y corre el render; los demás comparten el origen", () => {
+	const box = { width: 344, height: 924 };
+	assert.deepEqual(client.modeLayout("side", box), { width: 344 * 2 + 24, height: 924, renderX: 344 + 24, figma: true, render: true });
+	for (const m of ["overlay", "diff"]) assert.deepEqual(client.modeLayout(m, box), { width: 344, height: 924, renderX: 0, figma: true, render: true });
+	assert.equal(client.modeLayout("render", box).figma, false);
+	assert.equal(client.modeLayout("figma", box).render, false);
+});
+
+test("modo inicial: el guardado si existe; si no, lado a lado; sin vista previa, solo el render", () => {
+	assert.equal(client.initialMode(null, true), "side");
+	assert.equal(client.initialMode("diff", true), "diff");
+	assert.equal(client.initialMode("otro", true), "side");
+	assert.equal(client.initialMode("diff", false), "render");
+	assert.deepEqual(client.MODES.map((m) => m.id), ["side", "overlay", "diff", "render", "figma"]);
+});

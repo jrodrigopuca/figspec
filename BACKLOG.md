@@ -130,7 +130,13 @@ carpeta aparte):
   cambiados, incluido un set sintético State × Size con texto, prop de instancia y estructura por
   variante, y aria; en Chrome, menu mobile y login caen exactos sobre la vista previa; las
   diferencias son las fuentes no instaladas y el fondo translúcido. 6 pruebas de render en
-  `test/viewer.test.js`; el arnés con React vive fuera del repo porque necesita React) · 5 comparación · 6 árbol + hit-test · 7 inspector ·
+  `test/viewer.test.js`; el arnés con React vive fuera del repo porque necesita React) · ~~5 comparación~~ (hecho: Lado a lado (por defecto), Superponer con
+  opacidad y parpadeo con Espacio, Diferencia con `mix-blend-mode: difference` sobre fondo blanco
+  y "Realzar" (`brightness(4)` sobre el grupo), Render y Figma; misma escala y origen; el modo se
+  recuerda en localStorage (con try/catch); sin vista previa solo Render, con el motivo en los
+  demás. Validado en Chrome con menu mobile y login: en Diferencia coinciden cajas, íconos e
+  imagen, y se destacan los textos por las fuentes no instaladas; parpadeo y modo guardado
+  comprobados con eventos simulados; tema claro y ancho de 800px revisados) · 6 árbol + hit-test · 7 inspector ·
   8 aviso de fuentes + README.
   _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
   lista de capas desviadas >2px; `--fonts <carpeta>`; inconsistencias clicables; controles de

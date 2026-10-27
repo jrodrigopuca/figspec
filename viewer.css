@@ -49,6 +49,7 @@ button:focus-visible { outline: 2px solid var(--fv-accent); outline-offset: 1px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 8px 12px;
   background: var(--fv-panel);
@@ -70,6 +71,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-notices p { margin: 0; }
 
 .fv-main { flex: 1; display: grid; grid-template-columns: 220px 1fr 260px; min-height: 0; }
+.fv-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.fv-center .fv-canvas { flex: 1; }
+.fv-modebar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 6px 12px; background: var(--fv-panel); border-bottom: 1px solid var(--fv-line); }
+.fv-modebar[hidden] { display: none; }
+.fv-modebar label { display: inline-flex; align-items: center; gap: 6px; }
+.fv-modebar output { min-width: 40px; font-variant-numeric: tabular-nums; }
+.fv-hint { color: var(--fv-muted); }
 .fv-side { background: var(--fv-panel); padding: 12px; overflow: auto; }
 .fv-side:first-child { border-right: 1px solid var(--fv-line); }
 .fv-side:last-child { border-left: 1px solid var(--fv-line); }
@@ -90,8 +98,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-sizer { position: relative; flex: none; margin: auto; border: 32px solid transparent; box-sizing: content-box; }
 .fv-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 .fv-preview { display: block; width: 100%; height: 100%; image-rendering: auto; user-select: none; }
+.fv-pane { position: absolute; top: 0; left: 0; }
+.fv-pane[hidden] { display: none; }
 .fv-render { position: absolute; left: 0; top: 0; }
-.fv-preview[hidden], .fv-render[hidden] { display: none; }
+/* Superponer y Diferencia: las dos imágenes sobre el mismo fondo, para que se comparen solo ellas */
+.fv-stage[data-mode="overlay"], .fv-stage[data-mode="diff"] { background: #fff; }
+.fv-stage[data-mode="overlay"] .fv-pane-render, .fv-stage[data-mode="diff"] .fv-pane-render { background: #fff; }
+.fv-stage[data-mode="diff"] .fv-pane-render { mix-blend-mode: difference; }
+.fv-stage.fv-boost[data-mode="diff"] { filter: brightness(4); }
 
 .fv-error { max-width: 560px; margin: 15vh auto; padding: 0 16px; }
 .fv-error h1 { font-size: 18px; }

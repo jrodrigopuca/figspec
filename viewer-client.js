@@ -267,6 +267,37 @@ function previewBox(preview) {
 	return { width: preview.width / preview.scale, height: preview.height / preview.scale };
 }
 
+// ---------------------------------------------------------------- comparación
+// Modos del lienzo. Todos usan la misma escala y el mismo origen: el componente cae sobre la
+// vista previa (meta.preview.offset); en "Lado a lado" el render va a la derecha.
+const MODES = [
+	{ id: "side", label: "Lado a lado", title: "Figma a la izquierda y el render a la derecha" },
+	{ id: "overlay", label: "Superponer", title: "El render encima de Figma, con opacidad; mantén Espacio para alternar" },
+	{ id: "diff", label: "Diferencia", title: "Lo que coincide se ve negro; lo distinto, en color" },
+	{ id: "render", label: "Render", title: "Solo el componente generado" },
+	{ id: "figma", label: "Figma", title: "Solo la vista previa exportada desde Figma" },
+];
+const SIDE_GAP = 24;
+const MODE_KEY = "figspec.viewer.mode";
+
+// Qué se ve y dónde: tamaño del escenario y posición del panel del render
+function modeLayout(mode, box) {
+	const side = mode === "side";
+	return {
+		width: side ? box.width * 2 + SIDE_GAP : box.width,
+		height: box.height,
+		renderX: side ? box.width + SIDE_GAP : 0,
+		figma: mode !== "render",
+		render: mode !== "figma",
+	};
+}
+
+// Modo inicial: el último usado si se puede; si no, lado a lado (o solo el render sin vista previa)
+function initialMode(saved, hasPreview) {
+	if (!hasPreview) return "render";
+	return MODES.some((m) => m.id === saved) ? saved : "side";
+}
+
 // ---------------------------------------------------------------- interfaz
 function boot(doc, data) {
 	const app = doc.getElementById("app");
@@ -291,15 +322,17 @@ function boot(doc, data) {
 	const comps = [design.component, ...Object.values(design.subcomponents || {})];
 	let box = meta.preview ? previewBox(meta.preview) : { width: 0, height: 0 };
 	let zoom = 1;
-	let mode = "render";
+	let mode = null;
+	let opacity = 0.5;
 
-	// Escenario: la vista previa de Figma y, encima, el componente en su Shadow DOM, en la posición
-	// que indica meta.preview.offset (la imagen puede incluir sombras alrededor)
+	// Escenario con dos paneles del mismo tamaño: la vista previa de Figma y el componente en su
+	// Shadow DOM, en la posición que indica meta.preview.offset (la imagen puede incluir sombras)
 	const stage = h("div", { class: "fv-stage" });
-	const preview = data.preview
-		? h("img", { class: "fv-preview", src: data.preview, alt: `Vista previa de ${design.component.figmaName} exportada desde Figma`, draggable: "false" })
-		: null;
-	if (preview) stage.append(preview);
+	const figmaPane = h("div", { class: "fv-pane fv-pane-figma" });
+	const renderPane = h("div", { class: "fv-pane fv-pane-render" });
+	if (data.preview)
+		figmaPane.append(h("img", { class: "fv-preview", src: data.preview, alt: `Vista previa de ${design.component.figmaName} exportada desde Figma`, draggable: "false" }));
+	stage.append(figmaPane, renderPane);
 	const host = h("div", { class: "fv-render" });
 	if (meta.preview) {
 		host.style.left = `${meta.preview.offset.x / meta.preview.scale}px`;
@@ -311,35 +344,77 @@ function boot(doc, data) {
 	shadow.append(style);
 	const nodes = new Map(); // elemento del render → nodo virtual (árbol e inspector)
 	mount(doc, shadow, renderTree(data, design.component.name, {}), nodes);
-	stage.append(host);
+	renderPane.append(host);
 
 	// El transform no cambia el espacio que ocupa: el contenedor toma el tamaño ya escalado para
 	// que el lienzo se pueda desplazar con zoom alto
 	const sizer = h("div", { class: "fv-sizer" }, stage);
 	const canvas = h("section", { class: "fv-canvas", "aria-label": "Lienzo" }, sizer);
+	const noPreview = "Sin vista previa: exporta con el plugin con «Vista previa (PNG)» activado";
 	const modeButtons = {};
-	const setMode = (m) => {
-		mode = m;
-		host.hidden = m !== "render";
-		if (preview) preview.hidden = m !== "figma";
-		for (const [k, b] of Object.entries(modeButtons)) b.setAttribute("aria-pressed", String(k === m));
-	};
 	const modeBar = h("div", { class: "fv-modes", role: "group", "aria-label": "Qué se muestra" },
-		[["render", "Render", "El componente generado"], ["figma", "Figma", data.preview ? "La vista previa exportada desde Figma" : "Sin vista previa: exporta con el plugin con «Vista previa (PNG)» activado"]].map(([k, label, title]) =>
-			(modeButtons[k] = h("button", { type: "button", title, disabled: k === "figma" && !data.preview, onclick: () => setMode(k) , text: label })),
-		),
+		MODES.map((m) => {
+			const off = m.id !== "render" && !data.preview;
+			return (modeButtons[m.id] = h("button", { type: "button", title: off ? noPreview : m.title, disabled: off, onclick: () => setMode(m.id, true), text: m.label }));
+		}),
 	);
+
+	// Controles de cada modo, en una franja sobre el lienzo (no se escalan con el zoom)
+	const slider = h("input", { type: "range", min: "0", max: "100", value: String(opacity * 100), "aria-label": "Opacidad del render",
+		oninput: (e) => { opacity = e.target.valueAsNumber / 100; renderPane.style.opacity = String(opacity); sliderLabel.textContent = `${Math.round(opacity * 100)} %`; } });
+	const sliderLabel = h("output", { text: `${Math.round(opacity * 100)} %` });
+	const boost = h("input", { type: "checkbox", onchange: (e) => stage.classList.toggle("fv-boost", e.target.checked) });
+	const modeTools = {
+		side: [h("span", { text: "Izquierda: Figma · Derecha: render" })],
+		overlay: [h("label", {}, "Render ", slider, " ", sliderLabel), h("span", { class: "fv-hint", text: "Mantén Espacio para alternar entre los dos" })],
+		diff: [h("span", { text: "Negro: igual · Color: distinto" }), h("label", {}, boost, " Realzar diferencias sutiles")],
+		render: [],
+		figma: [],
+	};
+	const toolbar = h("div", { class: "fv-modebar", role: "toolbar", "aria-label": "Opciones del modo" });
+
+	function setMode(m, user) {
+		const before = mode && modeLayout(mode, box);
+		mode = m;
+		const l = modeLayout(m, box);
+		stage.dataset.mode = m;
+		figmaPane.hidden = !l.figma;
+		renderPane.hidden = !l.render;
+		renderPane.style.left = `${l.renderX}px`;
+		renderPane.style.opacity = m === "overlay" ? String(opacity) : "";
+		toolbar.replaceChildren(...modeTools[m]);
+		toolbar.hidden = !modeTools[m].length;
+		for (const [k, b] of Object.entries(modeButtons)) b.setAttribute("aria-pressed", String(k === m));
+		if (user)
+			try {
+				localStorage.setItem(MODE_KEY, m);
+			} catch {
+				// sin almacenamiento (archivo local en algunos navegadores): no se recuerda
+			}
+		// Lado a lado ocupa el doble: se vuelve a ajustar al cambiar de tamaño
+		if (before && before.width !== l.width) fit();
+		else if (before) setZoom(zoom);
+	}
 	const zoomLabel = h("output", { class: "fv-zoom", "aria-live": "polite" });
+	const layoutBox = () => {
+		const l = modeLayout(mode || "render", box);
+		return { width: l.width, height: l.height };
+	};
 	const setZoom = (z) => {
 		zoom = z;
-		stage.style.width = `${box.width}px`;
-		stage.style.height = `${box.height}px`;
+		const b = layoutBox();
+		for (const pane of [figmaPane, renderPane]) {
+			pane.style.width = `${box.width}px`;
+			pane.style.height = `${box.height}px`;
+		}
+		stage.style.width = `${b.width}px`;
+		stage.style.height = `${b.height}px`;
 		stage.style.transform = `scale(${z})`;
-		sizer.style.width = `${box.width * z}px`;
-		sizer.style.height = `${box.height * z}px`;
+		sizer.style.width = `${b.width * z}px`;
+		sizer.style.height = `${b.height * z}px`;
 		zoomLabel.textContent = `${Math.round(z * 100)} %`;
 	};
-	const fit = () => setZoom(fitZoom(box, canvas.getBoundingClientRect()));
+	const fit = () => setZoom(fitZoom(layoutBox(), canvas.getBoundingClientRect()));
 
 	const notices = [];
 	if (data.missing && data.missing.length)
@@ -363,7 +438,7 @@ function boot(doc, data) {
 				h("h2", { text: "Componentes" }),
 				h("ul", {}, comps.map((c) => h("li", {}, h("span", { text: c.name }), c.figmaName !== c.name && h("small", { text: c.figmaName })))),
 			),
-			canvas,
+			h("div", { class: "fv-center" }, toolbar, canvas),
 			h("aside", { class: "fv-side", "aria-label": "Detalles" },
 				h("h2", { text: "Detalles" }),
 				h("dl", {},
@@ -376,18 +451,47 @@ function boot(doc, data) {
 			),
 		)].filter(Boolean),
 	);
+	// Superponer: con Espacio presionado se alterna entre Figma y el render (delata corrimientos)
+	let blink = null;
+	const stopBlink = () => {
+		if (!blink) return;
+		clearInterval(blink);
+		blink = null;
+		renderPane.style.opacity = mode === "overlay" ? String(opacity) : "";
+	};
+	doc.addEventListener("keyup", (e) => {
+		if (e.key === " ") stopBlink();
+	});
+	doc.defaultView && doc.defaultView.addEventListener("blur", stopBlink);
 	doc.addEventListener("keydown", (e) => {
+		if (e.key === " " && mode === "overlay" && !(e.target && e.target.closest && e.target.closest("button"))) {
+			e.preventDefault();
+			if (e.repeat || blink) return;
+			let on = false;
+			renderPane.style.opacity = "0";
+			blink = setInterval(() => {
+				on = !on;
+				renderPane.style.opacity = on ? "1" : "0";
+			}, 400);
+			return;
+		}
 		if (!(e.metaKey || e.ctrlKey)) return;
 		if (e.key === "0") fit();
 		else if (e.key === "1") setZoom(1);
 		else return;
 		e.preventDefault();
 	});
-	setMode("render");
 	// Sin vista previa, el escenario toma el tamaño del componente dibujado
 	if (!meta.preview) box = { width: Math.max(1, host.offsetWidth), height: Math.max(1, host.offsetHeight) };
+	let saved = null;
+	try {
+		saved = localStorage.getItem(MODE_KEY);
+	} catch {
+		// sin almacenamiento: modo por defecto
+	}
+	setMode(initialMode(saved, !!data.preview));
 	fit();
 	app.dataset.ready = "true";
 }
 
-module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, fitZoom, stepZoom, previewBox, boot };
+module.exports = { checkData, prefixClass, prefixCss, hostTokens, resolveAssets, shadowCss, renderTree, toHtml, MODES, modeLayout, initialMode, fitZoom, stepZoom, previewBox, boot };

@@ -138,11 +138,20 @@ node viewer.js figma-menu/                         # o después, sobre una salid
 
 Usa los mismos `.module.css` de la salida (con el nombre del componente como prefijo de cada clase) y la misma interpretación de `component.json` que el generador React (`spec.js`), así que lo que muestra es lo que se generó. No ejecuta React. Zoom: `Cmd/Ctrl+0` ajusta al lienzo y `Cmd/Ctrl+1` lo deja al 100 %.
 
-Arriba se elige qué se ve: **Render** (el componente generado, con sus valores por defecto) o **Figma** (la vista previa exportada). Los dos ocupan el mismo lugar: el componente se ubica sobre la vista previa con `meta.preview`, aunque la imagen incluya sombras alrededor.
+Arriba se elige cómo comparar el componente generado (con sus valores por defecto) con la vista previa exportada de Figma. Todos los modos usan la misma escala y el mismo origen: el componente se ubica sobre la vista previa con `meta.preview`, aunque la imagen incluya sombras alrededor.
+
+| Modo | Qué muestra |
+|---|---|
+| **Lado a lado** (por defecto) | Figma a la izquierda y el render a la derecha |
+| **Superponer** | El render encima de Figma con la opacidad que elijas; manteniendo **Espacio** alterna entre los dos, así se notan los corrimientos de pocos píxeles |
+| **Diferencia** | Lo que coincide se ve negro y lo distinto, en color; "Realzar diferencias sutiles" aclara las pequeñas |
+| **Render** / **Figma** | Uno solo |
+
+El último modo usado se recuerda. Sin vista previa en el paquete solo está el render. Un componente translúcido (con desenfoque de fondo) se ve distinto en la diferencia: la vista previa incluye lo que había detrás en Figma.
 
 Si un texto se ve con otra tipografía (por ejemplo, con serifas), la fuente del diseño no está instalada en tu equipo: el CSS la nombra sin una genérica de respaldo.
 
-En desarrollo: la comparación (lado a lado, superpuesta, diferencia), el árbol de capas y el inspector llegan en los próximos pasos (ver [BACKLOG.md](BACKLOG.md)).
+En desarrollo: el árbol de capas y el inspector llegan en los próximos pasos (ver [BACKLOG.md](BACKLOG.md)).
 
 ## Pruebas
 
