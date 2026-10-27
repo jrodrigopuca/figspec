@@ -211,6 +211,11 @@ function main() {
 		if (rep.length) comp.repeated = rep;
 		if (opts.extractRepeated) extractRepeated(comp, subcomponents);
 	}
+	// Después de extraer: los subcomponentes nuevos también tienen estados
+	for (const comp of [component, ...Object.values(subcomponents)]) {
+		const aria = ariaFor(comp);
+		if (aria.length) comp.aria = aria;
+	}
 	// Una respuesta de /nodes (API REST) no trae los archivos: las rutas quedarían sin archivo
 	if (!ctx.bundle && opts.assets && (ctx.icons.size || ctx.imageRefs.size)) {
 		const msg = `La entrada no es un paquete del plugin: los ${ctx.icons.size} ícono(s) y ${ctx.imageRefs.size} imagen(es) no están en la salida y sus rutas (assets/…) quedan sin archivo. Exporta con el plugin para incluirlos.`;
@@ -1672,6 +1677,10 @@ function notes(subs) {
 		n.push(
 			'repeated: grupos de 3 o más hermanos con la misma estructura (ítems de un menú, filas, tarjetas). "varies" dice qué cambia entre ellos, por clase del primero: propiedades CSS, "text", "src" (ícono) o "hidden"; "styleGroups" agrupa los que tienen estilos idénticos (posibles estados: activo, deshabilitado…). Son candidatos a un subcomponente renderizado con items.map(...).',
 		);
+	if ([ctx.rootComponent, ...Object.values(subs)].some((s) => s && s.aria))
+		n.push(
+			'aria: atributos de accesibilidad deducidos del nombre de los estados (active/current/selected → aria-current="true", disabled → aria-disabled="true"), aplicados en la raíz del componente. Revísalos: en un menú de navegación conviene aria-current="page", y un elemento deshabilitado que sea un botón real debería usar disabled.',
+		);
 	if (Object.values(subs).some((s) => s.extractedFrom))
 		n.push(
 			'--extract-repeated: los grupos repetidos se extrajeron a subcomponentes ("extractedFrom"): lo que cambia entre ítems es una prop (label = texto, icon = componente de ícono, show… = visibilidad) y cada grupo de estilos, un estado (state). Estados deducidos: default = el grupo más numeroso; disabled = menor opacidad; active = único ítem con otro fondo; con número si se repiten (disabled2). Renómbralos si el diseño tiene nombres mejores.',
@@ -2279,6 +2288,40 @@ function repeatedSub(comp, parent, items, rep) {
 		return inst;
 	});
 	return sub;
+}
+
+// ---------------------------------------------------------------- accesibilidad según el estado
+// Atributos aria deducidos del nombre de los valores de una variante (state, status…), tanto en
+// los sets de Figma (State=Disabled) como en los ítems extraídos: una palabra active / current /
+// selected → aria-current; disabled → aria-disabled. Se comparan palabras completas: "inactive"
+// no es "active", "legacyDisabled" sí es "disabled".
+const ARIA = [
+	{ attr: "aria-current", words: ["active", "current", "selected"] },
+	{ attr: "aria-disabled", words: ["disabled"] },
+];
+
+function ariaFor(comp) {
+	const out = [];
+	for (const [prop, def] of Object.entries(comp.props || {})) {
+		if (def.type !== "variant") continue;
+		for (const { attr, words: keys } of ARIA) {
+			const values = (def.options || []).filter((v) =>
+				valueWords(v).some((w) => keys.includes(w)),
+			);
+			if (values.length) out.push({ attr, prop, values });
+		}
+	}
+	return out;
+}
+
+// "legacyDisabled2" → ["legacy", "disabled"]; "Is Active" → ["is", "active"]
+function valueWords(v) {
+	return String(v)
+		.replace(/([a-z])([A-Z])/g, "$1 $2")
+		.replace(/\d+/g, " ")
+		.toLowerCase()
+		.split(/[^a-z]+/)
+		.filter(Boolean);
 }
 
 // Nombres de estado. Si en el plugin se nombró algún ítem del grupo, ese nombre; si no, según

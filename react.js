@@ -181,9 +181,20 @@ function renderEl(el, g, n, isRoot) {
 function renderBox(el, g, n, isRoot) {
 	const tag = el.tag === "span" ? "span" : "div";
 	const attrs = [classAttr(el, g, isRoot)];
-	if (isRoot)
+	if (isRoot) {
 		for (const [p, def] of Object.entries(g.comp.props || {}))
 			if (def.type === "variant") attrs.push(`data-${kebab(p)}={${useVar(p, g)}}`);
+		// Accesibilidad según el estado (comp.aria, deducido por el extractor)
+		for (const { attr, prop, values } of g.comp.aria || []) {
+			const v = useVar(prop, g);
+			const cond = values.map((x) => `${v} === ${JSON.stringify(x)}`).join(" || ");
+			attrs.push(
+				attr === "aria-current"
+					? `${attr}={${cond} ? "true" : undefined}`
+					: `${attr}={${values.length > 1 ? `(${cond})` : cond} || undefined}`,
+			);
+		}
+	}
 	const open = `<${tag}${attrs.filter(Boolean).map((a) => " " + a).join("")}`;
 
 	const kids = [];

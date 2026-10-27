@@ -95,6 +95,7 @@ import { Card } from "./components/Card"; // la subcarpeta copiada a tu proyecto
 
 - **Props tipadas desde Figma**: las variantes como uniones (`"Default" | "Hover"`), los booleanos muestran u ocultan capas, los textos enlazados son `string` y los intercambios de instancia `ReactNode`. Todos son opcionales, con los valores por defecto de Figma, y cada componente acepta `className`.
 - Lo que cambia por variante (estilos, textos, props de subcomponentes y estructura) se resuelve dentro del componente.
+- Accesibilidad según el estado: si un valor de variante contiene la palabra `active`, `current` o `selected`, la raíz recibe `aria-current="true"` en ese estado; si contiene `disabled`, `aria-disabled="true"`. Vale para los sets de Figma (`State=Disabled`) y para los ítems extraídos. Revísalo: en un menú de navegación conviene `aria-current="page"`.
 - Requisitos del proyecto: TypeScript, React 17+ con el JSX automático, y un bundler con CSS Modules e importación de imágenes (Vite, Next.js y Create React App lo traen). `tokens.css` es opcional: cada `var()` lleva su valor de Figma como respaldo; impórtalo una vez de forma global si quieres usar los tokens.
 - Los archivos se regeneran en cada ejecución: no los edites a mano; envuélvelos o extiéndelos desde tus propios componentes.
 

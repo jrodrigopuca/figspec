@@ -27,8 +27,11 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
   1920×1080 → `.jpg` detectado por contenido, `<img>` en el componente, captura igual a Figma).
 
 **Funcionalidad**
-- [ ] `aria-current` / `aria-disabled` en los ítems extraídos, deducidos del nombre del estado
-  (`active`/`current` → `aria-current`, `disabled…` → `aria-disabled`).
+- [x] `aria-current` / `aria-disabled` deducidos del nombre del estado: palabra `active`/`current`/
+  `selected` → `aria-current="true"`; `disabled` → `aria-disabled="true"` (palabras completas:
+  "inactive" no cuenta, "legacyDisabled" sí). En sets de Figma (`State=Disabled`) y en ítems
+  extraídos, con los nombres elegidos en el plugin. Campo `aria` en `component.json`; nota que
+  sugiere `aria-current="page"` en menús. Verificado con el menú real (estados renombrados) y render.
 - [ ] `items.map(...)` con un array de datos en lugar de instancias explícitas.
 - [ ] Extraer repetidos en componentes con variantes (hoy solo se reportan).
 
@@ -273,9 +276,9 @@ Resumen de lo pendiente (el detalle está en cada ítem más abajo).
   inconsistencias del diseño: "Pack" y "Logs" usan Roboto 500 · 14px en vez de Geist 700 · 12px);
   captura en Chrome igual a la `preview.png`; `tsc --strict` sobre el menú, 7 JSON de prueba y 7
   casos genéricos; 21 pruebas en `test/naming.test.js`. Sin la opción, la salida no cambia.
-  _Pendiente:_ `aria-current` / `aria-disabled` según el estado (no se puede saber con certeza qué
-  estado es cuál); extraer en componentes con variantes; generar `items.map(...)` con un array de
-  datos en lugar de instancias explícitas. (Nombrar estados desde el plugin: hecho, paso 3b.)
+  _Pendiente:_ extraer en componentes con variantes; generar `items.map(...)` con un array de datos
+  en lugar de instancias explícitas. (Hechos: nombrar estados desde el plugin, paso 3b; `aria-*`
+  según el nombre del estado, ver "En mira".)
 
 ## P3
 

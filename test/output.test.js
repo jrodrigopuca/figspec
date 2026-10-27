@@ -142,3 +142,37 @@ test("texto centrado con partes de estilo distinto: se deja arriba y se avisa", 
 	assert.equal(r.css("Hola mundo").display, undefined);
 	assert.ok(r.note(/alineación vertical/));
 });
+
+// ---------------------------------------------------------------- accesibilidad según el estado
+function stateSet(states) {
+	const variant = (s) => ({ id: `${++seq}:1`, name: `State=${s}`, type: "COMPONENT", layoutMode: "HORIZONTAL", absoluteBoundingBox: box(100, 40), children: [T("Ok")] });
+	return {
+		id: `${++seq}:1`, name: "Button", type: "COMPONENT_SET", absoluteBoundingBox: box(300, 100),
+		componentPropertyDefinitions: { State: { type: "VARIANT", defaultValue: states[0], variantOptions: states } },
+		children: states.map(variant),
+	};
+}
+
+test("aria: valores de variante con active/current/selected o disabled", () => {
+	const r = extract(stateSet(["Default", "Active", "Inactive", "Disabled", "Legacy Disabled"]));
+	assert.deepEqual(r.spec.component.aria, [
+		{ attr: "aria-current", prop: "state", values: ["Active"] },
+		{ attr: "aria-disabled", prop: "state", values: ["Disabled", "Legacy Disabled"] },
+	]);
+	assert.ok(r.note(/aria-current="page"/), "sugiere page para menús");
+});
+
+test("aria: sin estados reconocibles no se agrega nada", () => {
+	const r = extract(stateSet(["Default", "Hover", "Pressed"]));
+	assert.equal(r.spec.component.aria, undefined);
+});
+
+test("aria: los ítems extraídos con estados automáticos (active, disabled) lo reciben", () => {
+	const item = (s, extra = {}) => F("Item", "HORIZONTAL", [T(s)], extra);
+	const dark = { fills: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }] };
+	const r = extract(F("Nav", "VERTICAL", [item("A", dark), item("B"), item("C"), item("D", { opacity: 0.4 })]), ["--extract-repeated", "--react"]);
+	assert.deepEqual(r.spec.subcomponents.Item.aria.map((a) => [a.attr, a.values]), [["aria-current", ["active"]], ["aria-disabled", ["disabled"]]]);
+	const tsx = fs.readFileSync(path.join(r.out, "Nav", "Item.tsx"), "utf8");
+	assert.match(tsx, /aria-current=\{state === "active" \? "true" : undefined\}/);
+	assert.match(tsx, /aria-disabled=\{state === "disabled" \|\| undefined\}/);
+});
