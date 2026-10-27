@@ -154,8 +154,15 @@ carpeta aparte):
   `figma-geometry.json` suma `paths`; el visualizador descarga v2 con ruta, fecha y origen y lee
   lo aplicado en v1 o v2. Validado con el menú real: un archivo v1 se sigue aplicando, y una
   copia con todos los ids cambiados aplica 9 nombres por ruta; 7 pruebas nuevas) ·
-  2b carpetas en `.env`, un archivo de decisiones por componente en el proyecto, combinación de
-  entrantes ·
+  ~~2b carpetas en `.env`~~ (hecho: `FIGMA_FROM` carpeta → el paquete del componente nombrado
+  —`npm start -- achievements`— o el último; `FIGMA_OUT_DIR` base con una subcarpeta por
+  componente, o tal cual si ya es una salida; `FIGMA_DECISIONS` carpeta → un
+  `<componente>.decisions.json` buscado por el id del componente o por nombre, creado al
+  primer nombre y actualizado solo si cambia, después de generar bien la salida; `FIGMA_INBOX`
+  (pedido por el usuario) para lo que descarga el navegador; `--decisions` del comando solo se
+  lee; `viewer.js` acepta el componente o toma la salida más reciente. Validado con
+  "Achievements" y el menú real: los 8 nombres que el paquete viejo del menú traía adentro se
+  migraron solos al archivo del proyecto; una segunda corrida no lo reescribe; 6 pruebas) ·
   3 visualizador: modo Nombres (sin Código, con estados), "Guardar nombres", estado
   aplicados/sin guardar, servidor local · 4 `npm run react` (destino, al día, aviso de cambios en
   clases y props) · 5 grupos repetidos.

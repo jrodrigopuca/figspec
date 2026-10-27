@@ -1020,7 +1020,7 @@ function boot(doc, data) {
 			h("div", { class: "fv-insp-tools" },
 				h("button", { type: "button", text: "Descargar decisiones", onclick: download }),
 				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); } })),
-			h("p", { class: "fv-hint" }, `Guarda ${fileName} junto al paquete y vuelve a generar (npm start, o `, h("code", { text: cmd }), "): el extractor lo encuentra solo. ", copyBtn),
+			h("p", { class: "fv-hint" }, `Guarda ${fileName} en tu carpeta de descargas (FIGMA_INBOX) o junto al paquete y vuelve a generar (npm start, o `, h("code", { text: cmd }), "): el extractor lo incorpora a las decisiones del proyecto. ", copyBtn),
 		);
 	}
 

@@ -8,7 +8,8 @@
  *
  * Uso:
  *   node viewer.js <carpeta de salida> [--open]  → <carpeta>/viewer.html (y lo abre)
- *   node viewer.js --open                        → la carpeta de FIGMA_OUT_DIR (.env)
+ *   node viewer.js [componente] --open           → con FIGMA_OUT_DIR (.env): la salida de ese
+ *                                                  componente, o la más reciente
  *   node extractor.js figspec-x.json --viewer    → lo mismo, al terminar la extracción
  *
  * El navegador reproduce el componente con los mismos .module.css (clases con el nombre del
@@ -18,7 +19,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { loadDefaultEnv, expandHome, openFile } = require("./env");
+const { loadDefaultEnv, expandHome, openFile, outDirFor, componentSlug } = require("./env");
 
 // Versión de component.json que entiende el visualizador (meta.format)
 const FORMAT = 1;
@@ -168,13 +169,31 @@ function escapeHtml(s) {
 }
 
 // ---------------------------------------------------------------- CLI
+// La carpeta a usar: la indicada si existe; con FIGMA_OUT_DIR, la del componente nombrado
+// ("achievements") o, sin nombre, la salida generada más recientemente
+function resolveOutDir(arg, base) {
+	if (arg && fs.existsSync(arg)) return arg;
+	if (!base) return arg || null;
+	if (arg) return outDirFor(base, componentSlug(`${arg}.json`));
+	if (fs.existsSync(path.join(base, MANIFEST))) return base;
+	let best = null;
+	// Por component.json: cambia al extraer, no al regenerar el visualizador
+	for (const name of fs.existsSync(base) ? fs.readdirSync(base) : []) {
+		const m = path.join(base, name, "component.json");
+		if (!fs.existsSync(path.join(base, name, MANIFEST)) || !fs.existsSync(m)) continue;
+		const t = fs.statSync(m).mtimeMs;
+		if (!best || t > best.t) best = { dir: path.join(base, name), t };
+	}
+	return best ? best.dir : base;
+}
+
 // Sin el extractor: escribe viewer.html y lo suma al manifiesto, si existe, para que la próxima
 // extracción lo reemplace o lo borre como al resto de la salida.
 function cli(argv) {
 	loadDefaultEnv();
-	const outDir = argv.find((a) => !a.startsWith("--")) || expandHome(process.env.FIGMA_OUT_DIR);
+	const outDir = resolveOutDir(argv.find((a) => !a.startsWith("--")), expandHome(process.env.FIGMA_OUT_DIR));
 	if (!outDir || argv.includes("--help")) {
-		console.log("Uso: node viewer.js [carpeta de salida del extractor] [--open]\nEscribe <carpeta>/viewer.html (autocontenido); sin carpeta, usa FIGMA_OUT_DIR del .env.\n--open lo abre en el navegador.");
+		console.log("Uso: node viewer.js [carpeta de salida | componente] [--open]\nEscribe <carpeta>/viewer.html (autocontenido). Con FIGMA_OUT_DIR (.env), un nombre de componente\nusa su subcarpeta; sin nada, la salida más reciente.\n--open lo abre en el navegador.");
 		return outDir ? 0 : 1;
 	}
 	try {

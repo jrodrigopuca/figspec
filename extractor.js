@@ -55,7 +55,7 @@ const allSides = (w) => ({ top: w, right: w, bottom: w, left: w });
 // ---------------------------------------------------------------- .env
 // Lee la configuración (FIGMA_FROM, FIGMA_OUT_DIR…) desde un .env en la carpeta actual o en la
 // del extractor (ver env.js).
-const { loadDefaultEnv, expandHome, newestCopy, withoutCopyMark, openFile } = require("./env");
+const { loadDefaultEnv, expandHome, newestCopy, withoutCopyMark, openFile, isDir, componentSlug, bundleIn, bundlesIn, outDirFor, decisionsIn } = require("./env");
 loadDefaultEnv();
 
 // ---------------------------------------------------------------- CLI
@@ -70,12 +70,17 @@ const opts = {
 	shallow: envFlag("FIGMA_SHALLOW", false),
 	react: envFlag("FIGMA_REACT", false),
 	viewer: envFlag("FIGMA_VIEWER", false),
-	decisions: expandHome(process.env.FIGMA_DECISIONS) || null,
-	findDecisions: true, // busca <paquete>.decisions.json junto al paquete
+	decisions: null, // --decisions: un archivo que solo se lee
+	// Decisiones del proyecto (.env): archivo o carpeta con un <componente>.decisions.json por
+	// componente; se leen y se actualizan con lo entrante (nombres del plugin, del visualizador)
+	projectDecisions: expandHome(process.env.FIGMA_DECISIONS) || null,
+	inbox: expandHome(process.env.FIGMA_INBOX) || null, // donde descarga el navegador (opcional)
+	findDecisions: true, // busca nombres y decisiones junto al paquete
 	open: false,
+	component: null, // nombre del componente (npm start -- menu-mobile), con FIGMA_FROM carpeta
 	// Rutas del .env: el navegador guarda las descargas repetidas como copias ("x (1).json")
 	fromEnv: !!process.env.FIGMA_FROM,
-	decisionsFromEnv: !!process.env.FIGMA_DECISIONS,
+	outDirFromEnv: !!process.env.FIGMA_OUT_DIR,
 	extractRepeated: envFlag("FIGMA_EXTRACT_REPEATED", false),
 };
 const argv = process.argv.slice(2);
@@ -95,16 +100,20 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-react") opts.react = false;
 	else if (a === "--viewer") opts.viewer = true;
 	else if (a === "--no-viewer") opts.viewer = false;
-	else if (a === "--out-dir") opts.outDir = argv[++i];
+	else if (a === "--out-dir") (opts.outDir = argv[++i]), (opts.outDirFromEnv = false);
 	else if (a === "--name") opts.name = argv[++i];
 	else if (a === "--from" || a === "--json") (opts.from = argv[++i]), (opts.fromEnv = false);
-	else if (a === "--decisions") (opts.decisions = argv[++i]), (opts.decisionsFromEnv = false);
-	else if (a === "--no-decisions") (opts.decisions = null), (opts.findDecisions = false);
+	else if (a === "--decisions") opts.decisions = argv[++i];
+	else if (a === "--no-decisions") (opts.decisions = null), (opts.projectDecisions = null), (opts.findDecisions = false);
 	else if (a === "--open") opts.open = true;
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
-	} else if (!a.startsWith("--")) (opts.from = a), (opts.fromEnv = false);
+	} else if (!a.startsWith("--")) {
+		// Un archivo, o el nombre de un componente si FIGMA_FROM es una carpeta de paquetes
+		if (!fs.existsSync(a) && opts.from && isDir(opts.from)) opts.component = a;
+		else (opts.from = a), (opts.fromEnv = false);
+	}
 	else fail(`Opción desconocida: ${a}`);
 }
 
@@ -161,27 +170,41 @@ function main() {
 	if (opts.viewer && !opts.css)
 		fail("--viewer usa los CSS Modules: quita --no-css (o FIGMA_CSS=false).");
 	if (opts.open && !opts.viewer) opts.viewer = true; // --open abre el visualizador: lo genera
-	// Desde el .env, la copia más reciente del paquete (el plugin descarga "figspec-x (1).json"…)
-	if (opts.fromEnv) {
+	// FIGMA_FROM carpeta: el paquete del componente pedido o, sin nombre, el último exportado
+	if (opts.fromEnv && isDir(opts.from)) {
+		const dir = opts.from;
+		opts.from = bundleIn(dir, opts.component);
+		if (!opts.from) {
+			const list = bundlesIn(dir).slice(0, 8).map(componentSlug);
+			fail(
+				opts.component
+					? `No está figspec-${componentSlug(`${opts.component}.json`)}.json en ${dir}.${list.length ? ` Hay: ${list.join(", ")}.` : ""}`
+					: `No hay paquetes (figspec-*.json) en ${dir}. Exporta el componente con el plugin.`,
+			);
+		}
+		console.error(`↺ Paquete: ${opts.from}`);
+	} else if (opts.fromEnv) {
+		// Desde el .env, la copia más reciente del paquete (el plugin descarga "figspec-x (1).json"…)
 		const newest = newestCopy(opts.from);
 		if (newest !== opts.from) console.error(`↺ Se usa la copia más reciente: ${newest}`);
 		opts.from = newest;
 	}
-	if (opts.decisions && opts.decisionsFromEnv) opts.decisions = newestCopy(opts.decisions);
-	// Junto al paquete y con su nombre: los nombres del plugin (.names.json) y, sin --decisions,
-	// las decisiones que descarga el visualizador (.decisions.json)
+	opts.slug = componentSlug(opts.from);
+	// Lo entrante, con el nombre del paquete: los nombres del plugin (.names.json) y lo que
+	// descargó el visualizador (.decisions.json), junto al paquete o en FIGMA_INBOX
 	opts.nameFiles = [];
+	opts.incoming = [];
 	if (opts.findDecisions) {
-		const base = withoutCopyMark(opts.from).replace(/\.json$/i, "");
-		const names = newestCopy(`${base}.names.json`);
-		if (fs.existsSync(names)) {
-			opts.nameFiles.push(names);
-			console.error(`↺ Nombres del plugin junto al paquete: ${names}`);
-		}
-		const found = newestCopy(`${base}.decisions.json`);
-		if (!opts.decisions && fs.existsSync(found)) {
-			opts.decisions = found;
-			console.error(`↺ Decisiones junto al paquete: ${found} (--no-decisions para no usarlas)`);
+		const base = path.basename(withoutCopyMark(opts.from)).replace(/\.json$/i, "");
+		const dirs = [...new Set([path.dirname(opts.from), opts.inbox].filter(Boolean).map((d) => path.resolve(d)))];
+		for (const dir of dirs) {
+			const names = newestCopy(path.join(dir, `${base}.names.json`));
+			if (fs.existsSync(names)) {
+				opts.nameFiles.push(names);
+				console.error(`↺ Nombres del plugin: ${names}`);
+			}
+			const dec = newestCopy(path.join(dir, `${base}.decisions.json`));
+			if (fs.existsSync(dec)) opts.incoming.push(dec);
 		}
 	}
 	let data;
@@ -215,7 +238,22 @@ function main() {
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
 	}
+	// Decisiones del proyecto (FIGMA_DECISIONS): el archivo, o el del componente en la carpeta
+	if (opts.projectDecisions) {
+		opts.projectFile = isDir(opts.projectDecisions) || !/\.json$/i.test(opts.projectDecisions)
+			? decisionsIn(opts.projectDecisions, opts.slug, nodeId)
+			: opts.projectDecisions;
+		if (fs.existsSync(opts.projectFile)) {
+			decisionSources.push(readDecisions(opts.projectFile, "decisions"));
+			console.error(`↺ Decisiones del proyecto: ${opts.projectFile}`);
+		}
+	}
 	for (const f of opts.nameFiles || []) decisionSources.push(readDecisions(f, "plugin"));
+	for (const f of opts.incoming || [])
+		if (!opts.projectFile || path.resolve(f) !== path.resolve(opts.projectFile)) {
+			decisionSources.push(readDecisions(f, "decisions"));
+			console.error(`↺ Decisiones ${opts.projectFile ? "descargadas" : "junto al paquete"}: ${f}${opts.projectFile ? "" : " (--no-decisions para no usarlas)"}`);
+		}
 	if (opts.decisions) decisionSources.push(readDecisions(opts.decisions, "decisions"));
 
 	const entry = data.nodes[nodeId];
@@ -275,8 +313,12 @@ function main() {
 		);
 	if (Object.keys(ctx.textStyles).length) result.textStyles = ctx.textStyles;
 
-	const outDir =
-		opts.outDir || `figma-${kebab(component.name) || "componente"}`;
+	// FIGMA_OUT_DIR es la carpeta base (una subcarpeta por componente), salvo que ya sea una salida
+	const outDir = opts.outDir
+		? opts.outDirFromEnv
+			? outDirFor(opts.outDir, opts.slug)
+			: opts.outDir
+		: `figma-${kebab(component.name) || "componente"}`;
 	fs.mkdirSync(outDir, { recursive: true });
 	cleanOutput(outDir);
 	// El componente y sus partes (CSS Modules, assets, .tsx) van en una subcarpeta lista para
@@ -334,6 +376,7 @@ function main() {
 			write(name, content, (s) => s),
 		);
 	writeManifest(outDir);
+	saveProjectDecisions();
 
 	console.error(`✔ ${outDir}/`);
 	if (opts.open) openFile(path.resolve(outDir, "viewer.html"));
@@ -482,6 +525,42 @@ function resolveDecisions(sources, root, nodeId) {
 		layers: [...layers.values()].map(clean),
 		states: [...states.values()].map(clean),
 	};
+}
+
+// Actualiza el archivo de decisiones del proyecto (FIGMA_DECISIONS) con lo combinado: lo que tenía
+// más lo entrante (nombres del plugin, decisiones descargadas por el visualizador). Solo si cambió;
+// lo que no encuentra capa se conserva.
+function saveProjectDecisions() {
+	const file = opts.projectFile;
+	if (!file || !ctx.decisions) return;
+	const strip = ({ orphan, ...x }) => x;
+	const d = ctx.decisions;
+	const doc = {
+		figspec: "decisions",
+		version: DECISIONS_VERSION,
+		origin: "project",
+		savedAt: new Date().toISOString(),
+		component: d.component,
+		...(d.root ? { root: strip(d.root) } : {}),
+		layers: d.layers.map(strip),
+		states: d.states.map(strip),
+		groups: [],
+	};
+	const same = (a, b) => JSON.stringify({ ...a, savedAt: 0, origin: 0 }) === JSON.stringify({ ...b, savedAt: 0, origin: 0 });
+	let before = null;
+	try {
+		before = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {
+		// todavía no existe
+	}
+	if (before && same(before, doc)) return;
+	if (!before && !doc.root && !doc.layers.length && !doc.states.length) return;
+	const key = (x) => `${x.id}:${x.name}:${x.at}`;
+	const old = new Set(before ? [...(before.layers || []), ...(before.states || [])].map(key) : []);
+	const added = [...doc.layers, ...doc.states].filter((x) => !old.has(key(x))).length;
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+	console.error(`✎ Decisiones del proyecto ${before ? "actualizadas" : "creadas"}: ${file}${added ? ` (${added} nombre(s) nuevos o cambiados)` : ""}`);
 }
 
 // ---------------------------------------------------------------- manifiesto de salida

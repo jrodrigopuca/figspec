@@ -13,7 +13,7 @@ const env = require("../env");
 
 const ROOT = path.join(__dirname, "..");
 // Sin variables del .env del proyecto: cada prueba define las suyas
-const CLEAN = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
+const CLEAN = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_INBOX: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
 
 let seq = 0;
 const T = (s) => ({ id: `${++seq}:1`, name: s, type: "TEXT", characters: s, style: { fontSize: 12 }, absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 } });
@@ -99,4 +99,126 @@ test("viewer.js sin argumentos usa FIGMA_OUT_DIR", () => {
 	assert.equal(r.status, 0, r.stderr);
 	assert.ok(fs.existsSync(path.join(out, "viewer.html")));
 	assert.equal(run("viewer.js", [], {}).status, 1, "sin carpeta ni FIGMA_OUT_DIR, muestra el uso");
+});
+
+// ---------------------------------------------------------------- carpetas por componente (.env)
+const cardNamed = (name, label) => {
+	const b = card(label);
+	b.name = name;
+	return b;
+};
+const names = (bundle, name, at) => {
+	const frame = bundle.nodes[bundle.nodeId].document.children[0];
+	return { figspec: "decisions", version: 2, origin: "plugin", component: { id: bundle.nodeId }, layers: [{ id: frame.id, figma: frame.name, path: [[frame.name, 0]], name, at }] };
+};
+
+test("FIGMA_FROM carpeta: el último paquete, o el del componente nombrado", () => {
+	const dir = tmp();
+	write(path.join(dir, "figspec-card.json"), card("Card"), 20);
+	write(path.join(dir, "figspec-login.json"), card("Login"), 10);
+	write(path.join(dir, "figspec-login.names.json"), { figspec: "decisions", version: 2, layers: [] }, 0); // no es un paquete
+	const base = path.join(dir, "out");
+	const vars = { FIGMA_FROM: dir, FIGMA_OUT_DIR: base };
+	const r = run("extractor.js", [], vars);
+	assert.equal(r.status, 0, r.stderr);
+	assert.match(r.stderr, /Paquete: .*figspec-login\.json/);
+	assert.ok(fs.existsSync(path.join(base, "login", "component.json")), "una subcarpeta por componente");
+	const r2 = run("extractor.js", ["card"], vars);
+	assert.equal(r2.status, 0, r2.stderr);
+	assert.equal(spec(path.join(base, "card")).component.structure.children[0].children[0].text, "Card");
+	const r3 = run("extractor.js", ["otro"], vars);
+	assert.equal(r3.status, 1);
+	assert.match(r3.stderr, /No está figspec-otro\.json .* Hay: login, card\./);
+});
+
+test("FIGMA_OUT_DIR que ya es una salida (con manifiesto) se sigue usando tal cual", () => {
+	const dir = tmp();
+	write(path.join(dir, "figspec-card.json"), card("Hola"));
+	const out = path.join(dir, "out");
+	assert.equal(run("extractor.js", [path.join(dir, "figspec-card.json"), "--out-dir", out], {}).status, 0);
+	assert.equal(run("extractor.js", [path.join(dir, "figspec-card.json")], { FIGMA_OUT_DIR: out }).status, 0);
+	assert.ok(!fs.existsSync(path.join(out, "card", "component.json")), "no crea una subcarpeta dentro de una salida");
+	assert.ok(fs.existsSync(path.join(out, "component.json")));
+});
+
+test("FIGMA_DECISIONS carpeta: se crea el archivo del componente con lo entrante y se actualiza solo si cambia", () => {
+	const dir = tmp();
+	const exports = path.join(dir, "exports");
+	const inbox = path.join(dir, "Downloads");
+	const project = path.join(dir, "figspec");
+	fs.mkdirSync(exports);
+	fs.mkdirSync(inbox);
+	const bundle = cardNamed("Card", "Benefits");
+	write(path.join(exports, "figspec-card.json"), bundle);
+	write(path.join(exports, "figspec-card.names.json"), names(bundle, "delPlugin", "2026-10-27T10:00:00.000Z"));
+	const vars = { FIGMA_FROM: exports, FIGMA_OUT_DIR: path.join(dir, "out"), FIGMA_DECISIONS: project, FIGMA_INBOX: inbox };
+	const r = run("extractor.js", [], vars);
+	assert.equal(r.status, 0, r.stderr);
+	const file = path.join(project, "card.decisions.json");
+	assert.match(r.stderr, /Decisiones del proyecto creadas: .*card\.decisions\.json/);
+	const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+	assert.equal(saved.version, 2);
+	assert.deepEqual(saved.component, { id: bundle.nodeId, figma: "Card" });
+	assert.deepEqual(saved.layers.map((x) => [x.name, x.origin]), [["delPlugin", "plugin"]]);
+
+	// Sin cambios: no se reescribe
+	const t0 = fs.statSync(file).mtimeMs;
+	const r2 = run("extractor.js", [], vars);
+	assert.doesNotMatch(r2.stderr, /Decisiones del proyecto/ && /✎/);
+	assert.equal(fs.statSync(file).mtimeMs, t0);
+
+	// Lo que descargó el visualizador en FIGMA_INBOX, más reciente, se incorpora
+	const viewer = { ...names(bundle, "fila", "2026-10-27T11:00:00.000Z"), origin: "viewer" };
+	write(path.join(inbox, "figspec-card.decisions.json"), viewer);
+	const r3 = run("extractor.js", [], vars);
+	assert.match(r3.stderr, /Decisiones descargadas: .*Downloads.*figspec-card\.decisions\.json/);
+	assert.match(r3.stderr, /Decisiones del proyecto actualizadas/);
+	assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).layers.map((x) => x.name), ["fila"]);
+	assert.equal(spec(path.join(dir, "out", "card")).component.structure.children[0].className, "fila");
+
+	// El archivo del plugin, más viejo, ya no lo pisa
+	const r4 = run("extractor.js", [], vars);
+	assert.equal(spec(path.join(dir, "out", "card")).component.structure.children[0].className, "fila");
+	assert.doesNotMatch(r4.stderr, /✎/);
+});
+
+test("FIGMA_DECISIONS carpeta: el archivo se encuentra por el id del componente aunque se llame distinto", () => {
+	const dir = tmp();
+	const bundle = cardNamed("Card", "Benefits");
+	write(path.join(dir, "figspec-card.json"), bundle);
+	const project = path.join(dir, "figspec");
+	fs.mkdirSync(project);
+	write(path.join(project, "tarjeta-vieja.decisions.json"), { ...names(bundle, "renombrada", "2026-10-27T10:00:00.000Z"), origin: "project" });
+	const r = run("extractor.js", [path.join(dir, "figspec-card.json"), "--out-dir", path.join(dir, "out")], { FIGMA_DECISIONS: project });
+	assert.equal(r.status, 0, r.stderr);
+	assert.match(r.stderr, /Decisiones del proyecto: .*tarjeta-vieja\.decisions\.json/);
+	assert.equal(spec(path.join(dir, "out")).component.structure.children[0].className, "renombrada");
+	assert.ok(!fs.existsSync(path.join(project, "card.decisions.json")));
+});
+
+test("--decisions en el comando solo se lee: no se modifica", () => {
+	const dir = tmp();
+	const bundle = cardNamed("Card", "Benefits");
+	write(path.join(dir, "figspec-card.json"), bundle);
+	write(path.join(dir, "figspec-card.names.json"), names(bundle, "delPlugin", "2026-10-27T12:00:00.000Z"));
+	const dec = path.join(dir, "otra", "x.decisions.json");
+	fs.mkdirSync(path.dirname(dec));
+	write(dec, names(bundle, "viejo", "2026-10-27T09:00:00.000Z"));
+	const before = fs.readFileSync(dec, "utf8");
+	assert.equal(run("extractor.js", [path.join(dir, "figspec-card.json"), "--out-dir", path.join(dir, "out"), "--decisions", dec], {}).status, 0);
+	assert.equal(fs.readFileSync(dec, "utf8"), before);
+});
+
+test("viewer.js con FIGMA_OUT_DIR: el componente nombrado o la salida más reciente", () => {
+	const dir = tmp();
+	write(path.join(dir, "figspec-card.json"), card("A"), 20);
+	write(path.join(dir, "figspec-login.json"), card("B"), 10);
+	const base = path.join(dir, "out");
+	run("extractor.js", ["card"], { FIGMA_FROM: dir, FIGMA_OUT_DIR: base });
+	run("extractor.js", ["login"], { FIGMA_FROM: dir, FIGMA_OUT_DIR: base });
+	assert.equal(run("viewer.js", ["card"], { FIGMA_OUT_DIR: base }).status, 0);
+	assert.ok(fs.existsSync(path.join(base, "card", "viewer.html")));
+	assert.ok(!fs.existsSync(path.join(base, "login", "viewer.html")));
+	assert.equal(run("viewer.js", [], { FIGMA_OUT_DIR: base }).status, 0);
+	assert.ok(fs.existsSync(path.join(base, "login", "viewer.html")), "sin nombre, la más reciente (login)");
 });
