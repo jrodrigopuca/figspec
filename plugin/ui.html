@@ -37,6 +37,7 @@
 	.locate { width: 24px; height: 24px; border: none; background: none; color: var(--figma-color-icon, #555); cursor: pointer; border-radius: 4px; flex-shrink: 0; }
 	.locate:hover { background: var(--figma-color-bg-hover, #f0f0f0); }
 	.empty { padding: 24px 12px; text-align: center; }
+	.section { display: flex; justify-content: space-between; margin: 12px 0 2px; }
 	.opts { display: flex; gap: 12px; }
 	.opts label { display: flex; align-items: center; gap: 4px; }
 	.actions { display: flex; gap: 8px; margin-top: 8px; }
@@ -83,6 +84,7 @@
 	const $ = (id) => document.getElementById(id);
 	const GLYPH = { frame: "#", icon: "◇", text: "T", instance: "◆" };
 	let rows = [];
+	let stateRows = []; // { ids, input } por grupo de estilo de cada estructura repetida
 	let lastJson = null;
 	let busy = false;
 
@@ -99,10 +101,13 @@
 		document.querySelectorAll("#list input").forEach((i) => (i.disabled = true));
 		const byId = {};
 		for (const r of rows) byId[r.id] = $(`in-${r.id}`).value.trim();
+		// El nombre de un estado viaja en cada ítem del grupo (el extractor agrupa por su cuenta)
+		const states = {};
+		for (const s of stateRows) for (const id of s.ids) states[id] = s.input.value.trim();
 		send({
 			type: "export",
 			options: { assets: $("assets").checked, png: $("png").checked },
-			names: { root: $("rootInput").value.trim(), byId },
+			names: { root: $("rootInput").value.trim(), byId, states },
 		});
 	};
 
@@ -146,8 +151,9 @@
 		status("");
 	}
 
-	function render({ root, rows: list }) {
+	function render({ root, rows: list, repeats = [] }) {
 		rows = list;
+		stateRows = [];
 		$("banner").style.display = "none";
 		$("rootName").textContent = `▣ ${root.name}`;
 		$("rootField").hidden = false;
@@ -196,8 +202,59 @@
 			row.querySelector(".locate").onclick = () => send({ type: "locate", id: r.id });
 			box.appendChild(row);
 		});
+		renderStates(box, repeats);
 		done();
 		status("");
+	}
+
+	// Estados de los ítems repetidos (los usa --extract-repeated): un campo por grupo de estilo
+	function renderStates(box, repeats) {
+		for (const rep of repeats) {
+			if (rep.groups.length < 2) continue; // un solo estilo: no hay estados que nombrar
+			const head = document.createElement("div");
+			head.className = "section";
+			head.innerHTML = `<span><b>Estados</b> <span class="muted"></span></span><span class="muted">con --extract-repeated</span>`;
+			const n = rep.groups.reduce((s, g) => s + g.ids.length, 0);
+			head.querySelector(".muted").textContent = `${n} ítems en "${rep.parent}"`;
+			box.appendChild(head);
+			const inputs = [];
+			// Los grupos parecidos al de por defecto se numeran desde su nombre (default2 → normal2)
+			const follow = () => {
+				const def = inputs.find((x) => x.auto === "default");
+				const name = (def && def.input.value.trim()) || "default";
+				for (const x of inputs) {
+					const m = x.auto.match(/^default(\d+)$/);
+					if (m) x.input.placeholder = name + m[1];
+				}
+			};
+			for (const g of rep.groups) {
+				const row = document.createElement("div");
+				row.className = "row";
+				row.innerHTML =
+					`<span class="glyph" title="estado">◐</span>` +
+					`<span class="who"><b></b><span class="muted"></span></span>` +
+					`<input type="text" spellcheck="false" />` +
+					`<button class="locate" title="Ubicar en el lienzo">⌖</button>`;
+				row.querySelector("b").textContent = g.labels.join(", ");
+				row.querySelector(".who .muted").textContent = g.ids.length > 1 ? `${g.ids.length} ítems` : "1 ítem";
+				const input = row.querySelector("input");
+				input.value = g.value || "";
+				input.placeholder = g.auto;
+				input.onfocus = () => send({ type: "locate", id: g.ids[0] });
+				input.oninput = follow;
+				input.onkeydown = (e) => {
+					if (e.key === "Escape") {
+						input.value = "";
+						follow();
+					}
+				};
+				row.querySelector(".locate").onclick = () => send({ type: "locate", id: g.ids[0] });
+				stateRows.push({ ids: g.ids, input });
+				inputs.push({ auto: g.auto, input });
+				box.appendChild(row);
+			}
+			follow();
+		}
 	}
 
 	function done() {
@@ -222,10 +279,12 @@
 		const icons = Object.keys(bundle.icons).length;
 		const images = Object.keys(bundle.images).length;
 		const named = Object.keys(bundle.names.byId).length;
+		const states = Object.keys(bundle.names.states || {}).length;
 		status(
 			`Listo: ${file} (${Math.ceil(lastJson.length / 1024)} KB)\n` +
 				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}, ${named} nombre(s) elegidos.\n` +
-				`node extractor.js ${file}`,
+				// Los estados solo se usan al extraer los repetidos
+				`node extractor.js ${file}${states ? " --extract-repeated" : ""}`,
 		);
 		$("copy").style.display = "inline-block";
 		done();

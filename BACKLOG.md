@@ -219,7 +219,18 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   sugerencia del plugin es la clase que genera el extractor (las reglas están copiadas).
   _Pendiente de verificar en Figma real:_ `setPluginData` en capas dentro de instancias (si falla,
   ese nombre no se recuerda, pero sí se exporta), y que `scrollAndZoomIntoView` no altere la
-  selección. _Siguiente:_ nombrar los estados de los repetidos (`disabled2` → …) desde la ventana.
+  selección.
+  _Probado en Figma real_ ("menu mobile", 46 nodos): el paquete v2 trajo los nombres elegidos en la
+  ventana (`cambiarLink`, `productionTag`, `nav`) y el extractor los aplicó.
+- [x] **Paso 3b. Nombrar los estados de los repetidos desde la ventana.**
+  El plugin detecta las estructuras repetidas y agrupa los ítems por sus propiedades visuales de
+  Figma (el extractor agrupa por el CSS generado; los mismos grupos en el menú real y en las
+  pruebas), con el nombre automático como placeholder. Los nombres viajan **por ítem**
+  (`names.states`, `setPluginData("figspec.state")`), así un grupo distinto no rompe nada: el
+  extractor nombra cada grupo con el primero que encuentre y avisa si hay dos distintos. El estado
+  por defecto también se puede renombrar; los grupos parecidos a él se numeran desde ese nombre
+  (`normal2`), también en los placeholders de la ventana. El subcomponente se nombra por su
+  contenedor (`nav` → `NavItem`) si el diseñador no nombró los ítems.
 - [x] **Paso 4. Extraer repetidos a un subcomponente (`--extract-repeated`, opcional).**
   Cada grupo repetido → subcomponente (nombre del diseñador si es común, si no `<Componente>Item`):
   texto que cambia → `label`, ícono → `icon` (componente del ícono, conserva sus clases), visibilidad

@@ -275,3 +275,13 @@ test("un sufijo numérico se separa si el nombre termina en dígito", () => {
 	const frames = r.classes.filter((c) => c[0] === "Frame 1").map((c) => c[1]);
 	assert.deepEqual(frames, ["frame1", "frame1_2"]);
 });
+
+test("estados elegidos: dos nombres distintos en un mismo grupo usan el primero y avisan", () => {
+	const item = (label) => F("Item", "HORIZONTAL", [T(label)]);
+	const doc = F("List", "VERTICAL", [item("Uno"), item("Dos"), item("Tres"), { ...item("Cuatro"), opacity: 0.4 }]);
+	const [a, b, , d] = doc.children;
+	const r = extract(doc, ["--extract-repeated"], { figspec: 2, name: "List", nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {},
+		names: { byId: {}, states: { [a.id]: "normal", [b.id]: "otro", [d.id]: "off" } } });
+	assert.deepEqual(r.spec.subcomponents.Item.props.state.options, ["normal", "off"]);
+	assert.ok(r.spec.meta.notes.some((n) => /nombres de estado distintos/.test(n)));
+});

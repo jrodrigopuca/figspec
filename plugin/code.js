@@ -8,6 +8,7 @@
 const VECTOR_TYPES = ["VECTOR", "BOOLEAN_OPERATION", "STAR", "REGULAR_POLYGON"];
 // Nombres elegidos en la ventana, guardados en el archivo (datos del plugin, invisibles)
 const NAME_KEY = "figspec.name";
+const STATE_KEY = "figspec.state"; // nombre de estado de un ítem repetido
 
 let rootId = null; // raíz fijada: hacer clic en una fila o ubicar una capa no la cambia
 
@@ -72,6 +73,19 @@ async function analyze(node) {
 		const n = await figma.getNodeByIdAsync(row.id);
 		row.value = (n && readName(n)) || "";
 	}
+	const repeats = repeatGroups(entry);
+	for (const rep of repeats)
+		for (const g of rep.groups) {
+			g.value = "";
+			for (const id of g.ids) {
+				const n = await figma.getNodeByIdAsync(id);
+				const v = n && readName(n, STATE_KEY);
+				if (v) {
+					g.value = v;
+					break;
+				}
+			}
+		}
 	figma.ui.postMessage({
 		type: "analysis",
 		root: {
@@ -81,20 +95,21 @@ async function analyze(node) {
 			value: readName(node) || "",
 		},
 		rows,
+		repeats,
 	});
 }
 
-function readName(n) {
+function readName(n, key = NAME_KEY) {
 	try {
-		return n.getPluginData(NAME_KEY);
+		return n.getPluginData(key);
 	} catch (e) {
 		return "";
 	}
 }
 
-function writeName(n, value) {
+function writeName(n, value, key = NAME_KEY) {
 	try {
-		n.setPluginData(NAME_KEY, value || "");
+		n.setPluginData(key, value || "");
 	} catch (e) {
 		/* capas donde no se puede guardar (p. ej. dentro de algunas instancias): no se recuerda */
 	}
@@ -133,6 +148,109 @@ function vagueRows(entry) {
 	return rows;
 }
 
+// Estructuras repetidas (≥3 hermanos con la misma firma) y sus grupos de estilo, con el nombre de
+// estado que les daría el extractor (--extract-repeated). El extractor agrupa por el CSS generado;
+// aquí se comparan las propiedades visuales de Figma, que dan los mismos grupos en los casos
+// comunes. Los nombres elegidos viajan por ítem, así que un grupo distinto no rompe nada.
+function repeatGroups(entry) {
+	const components = entry.components || {};
+	let doc = entry.document;
+	if (doc.type === "COMPONENT_SET") doc = defaultVariant(doc);
+	const out = [];
+	const seenComponents = new Set();
+	const shown = (c) => c.visible !== false || (c.componentPropertyReferences || {}).visible;
+	(function visit(n, isRoot) {
+		if (!isRoot && (VECTOR_TYPES.includes(n.type) || isIconish(n))) return;
+		if (!isRoot && n.type === "INSTANCE" && n.componentId) {
+			const meta = components[n.componentId] || {};
+			const key = meta.componentSetId || n.componentId;
+			if (seenComponents.has(key)) return;
+			seenComponents.add(key);
+		}
+		const kids = (n.children || []).filter(shown);
+		const bySig = new Map();
+		for (const k of kids) {
+			// Como el extractor: contenedores con contenido; las instancias ya son un componente
+			if (k.type === "INSTANCE" || !(k.children || []).length) continue;
+			if (VECTOR_TYPES.includes(k.type) || isIconish(k)) continue;
+			const s = signature(k);
+			if (!bySig.has(s)) bySig.set(s, []);
+			bySig.get(s).push(k);
+		}
+		for (const items of bySig.values())
+			if (items.length >= REPEAT_MIN) out.push({ parent: n.name, groups: styleGroups(items) });
+		kids.forEach((k) => visit(k, false));
+	})(doc, true);
+	return out;
+}
+
+function styleGroups(items) {
+	const byKey = new Map();
+	for (const it of items) {
+		const k = visualKey(it);
+		if (!byKey.has(k)) byKey.set(k, []);
+		byKey.get(k).push(it);
+	}
+	const groups = [...byKey.values()];
+	const def = groups.reduce((best, g, i) => (g.length > groups[best].length ? i : best), 0);
+	const op = (n) => (n.opacity == null ? 1 : n.opacity);
+	const bg = (n) => JSON.stringify(visiblePaints(n.fills));
+	const auto = groups.map((g, i) =>
+		i === def
+			? "default"
+			: op(g[0]) < op(groups[def][0])
+				? "disabled"
+				: g.length === 1 && bg(g[0]) !== bg(groups[def][0])
+					? "active"
+					: "default",
+	);
+	const names = [];
+	const taken = new Set();
+	for (const i of [def, ...groups.keys()].filter((i, k, a) => a.indexOf(i) === k)) {
+		let name = auto[i];
+		for (let n = 2; taken.has(name); n++) name = `${auto[i]}${n}`;
+		taken.add(name);
+		names[i] = name;
+	}
+	return groups.map((g, i) => ({
+		auto: names[i],
+		ids: g.map((n) => n.id),
+		labels: g.map((n) => ownChildText(n) || firstText(n) || n.name),
+	}));
+}
+
+// Lo que se ve de una capa y su contenido, sin textos ni geometría: el tamaño solo si es fijo, y
+// de los íconos solo los colores (su tamaño depende del dibujo, no del estado)
+const VISUAL = [
+	"fills", "strokes", "strokeWeight", "strokeAlign", "individualStrokeWeights", "opacity", "effects",
+	"cornerRadius", "rectangleCornerRadii", "blendMode", "layoutMode", "itemSpacing", "paddingLeft",
+	"paddingRight", "paddingTop", "paddingBottom", "primaryAxisAlignItems", "counterAxisAlignItems",
+	"styles", "style", "clipsContent",
+];
+function visualKey(n) {
+	if (VECTOR_TYPES.includes(n.type) || isIconish(n)) return JSON.stringify(palette(n));
+	const own = {};
+	for (const k of VISUAL) if (n[k] !== undefined) own[k] = k === "fills" || k === "strokes" ? visiblePaints(n[k]) : n[k];
+	const bb = n.absoluteBoundingBox || {};
+	if (n.layoutSizingHorizontal === "FIXED") own.w = Math.round(bb.width * 100);
+	if (n.layoutSizingVertical === "FIXED" && n.type !== "TEXT") own.h = Math.round(bb.height * 100);
+	return JSON.stringify([own, (n.children || []).filter((c) => c.visible !== false).map(visualKey)]);
+}
+function palette(n, out = []) {
+	if (n.visible === false) return out;
+	for (const p of [...visiblePaints(n.fills), ...visiblePaints(n.strokes)])
+		out.push(p.type === "SOLID" ? [p.color, p.opacity] : p.type);
+	(n.children || []).forEach((c) => palette(c, out));
+	return out;
+}
+function firstText(n) {
+	for (const c of n.children || []) {
+		const t = ownText(c) || firstText(c);
+		if (t) return t;
+	}
+	return null;
+}
+
 function defaultVariant(set) {
 	const defs = set.componentPropertyDefinitions || {};
 	const want = Object.entries(defs)
@@ -157,6 +275,10 @@ async function exportRoot(options, names) {
 		const n = await figma.getNodeByIdAsync(id);
 		if (n) writeName(n, value);
 	}
+	for (const [id, value] of Object.entries(names.states || {})) {
+		const n = await figma.getNodeByIdAsync(id);
+		if (n) writeName(n, value, STATE_KEY);
+	}
 
 	progress("Exportando estructura…");
 	// Mismo formato que una entrada de GET /v1/files/:key/nodes
@@ -164,6 +286,8 @@ async function exportRoot(options, names) {
 	await addRotationGeometry(entry.document);
 	const byId = {};
 	for (const [id, value] of Object.entries(names.byId || {})) if (value) byId[id] = value;
+	const states = {};
+	for (const [id, value] of Object.entries(names.states || {})) if (value) states[id] = value;
 	const bundle = {
 		figspec: 2,
 		name: node.name,
@@ -171,7 +295,7 @@ async function exportRoot(options, names) {
 		fileKey: figma.fileKey || null, // solo disponible en plugins privados
 		exportedAt: new Date().toISOString(),
 		nodes: { [node.id]: entry },
-		names: { root: names.root || null, byId },
+		names: { root: names.root || null, byId, states },
 		variables: await variables(entry.document),
 		icons: {},
 		images: {},

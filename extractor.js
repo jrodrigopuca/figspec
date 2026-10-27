@@ -134,6 +134,8 @@ const ctx = {
 	namesById: new Map(), // nodeId → nombre elegido en el plugin (names.byId del paquete)
 	namesUsed: new Set(), // ids de namesById que se aplicaron (para avisar de los sobrantes)
 	elSignature: new WeakMap(), // elemento de structure → firma estructural de su capa
+	elId: new WeakMap(), // elemento de structure → id de su capa en Figma
+	statesById: new Map(), // id de un ítem repetido → nombre de estado elegido en el plugin
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
 	instanceClasses: new WeakMap(), // componente → clases que ubican instancias
@@ -177,6 +179,11 @@ function main() {
 		for (const v of Object.values(data.variables || {})) ctx.variables[v.id] = v;
 		const names = data.names || {};
 		ctx.namesById = new Map(Object.entries(names.byId || {}).filter(([, v]) => v));
+		ctx.statesById = new Map(
+			Object.entries(names.states || {})
+				.map(([id, v]) => [id, String(v).trim()])
+				.filter(([, v]) => v),
+		);
 		if (!opts.name && names.root) opts.name = names.root; // --name tiene prioridad
 		console.error(
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
@@ -639,6 +646,7 @@ function walk(node, parent, pctx, state, root, path = "") {
 
 	const el = { name: node.name };
 	ctx.elSignature.set(el, signature(node));
+	ctx.elId.set(el, node.id);
 	const iconLike = !isRoot && (VECTOR_TYPES.has(node.type) || isIconish(node));
 	el.className = isRoot
 		? "root"
@@ -1622,10 +1630,14 @@ function notes(subs) {
 			`Capas renombradas (con el nombre elegido en el plugin o según su texto o su tipo): ${list.slice(0, 12).join(", ")}${list.length > 12 ? `… (${list.length})` : ""}. Para otro nombre, usa la ventana del plugin o renómbralas en Figma.`,
 		);
 	}
-	const unused = [...ctx.namesById.keys()].filter((id) => !ctx.namesUsed.has(id));
+	// Los nombres de estado solo se usan al extraer repetidos: sin --extract-repeated no sobran
+	const unused = [
+		...ctx.namesById.keys(),
+		...(opts.extractRepeated ? ctx.statesById.keys() : []),
+	].filter((id) => !ctx.namesUsed.has(id));
 	if (unused.length)
 		n.push(
-			`${unused.length} nombre(s) elegidos en el plugin no corresponden a ninguna capa exportada (¿cambió el diseño?): ${unused.slice(0, 5).map((id) => `${id} → ${ctx.namesById.get(id)}`).join(", ")}.`,
+			`${unused.length} nombre(s) elegidos en el plugin no corresponden a ninguna capa exportada (¿cambió el diseño?): ${unused.slice(0, 5).map((id) => `${id} → ${ctx.namesById.get(id) || ctx.statesById.get(id)}`).join(", ")}.`,
 		);
 	if (ctx.unnamedVars)
 		n.push(
@@ -2022,11 +2034,13 @@ function repeatedSub(comp, parent, items, rep) {
 	const at = (item, p) => p.reduce((e, i) => e.children[i], item);
 	const distinct = (vals) => new Set(vals.map((v) => JSON.stringify(v))).size;
 
-	// Grupos de estilo → estados. El más numeroso es "default" y define la estructura base.
+	// Grupos de estilo → estados. El más numeroso es el estado por defecto ("default", salvo que en
+	// el plugin se le haya dado otro nombre) y define la estructura base.
 	const groups = rep.styleGroups || [items.map((i) => i.className)];
 	const reps = groups.map((g) => items.find((i) => i.className === g[0]));
 	const def = groups.reduce((best, g, i) => (g.length > groups[best].length ? i : best), 0);
-	const states = stateNames(groups, reps, def, styleOf);
+	const states = stateNames(groups, reps, def, styleOf, items);
+	const defName = states[def];
 	const stateOf = new Map();
 	groups.forEach((g, i) => g.forEach((c) => stateOf.set(c, states[i])));
 	const tplItem = reps[def];
@@ -2036,8 +2050,8 @@ function repeatedSub(comp, parent, items, rep) {
 	if (groups.length > 1)
 		props.state = {
 			type: "variant",
-			options: ["default", ...new Set(states.filter((s) => s !== "default"))],
-			default: "default",
+			options: [defName, ...new Set(states.filter((s) => s !== defName))],
+			default: defName,
 		};
 	const sources = []; // { prop, path, kind } → valor de la prop en cada ítem
 	const taken = new Set(["root"]);
@@ -2139,12 +2153,12 @@ function repeatedSub(comp, parent, items, rep) {
 		return null;
 	}
 
-	// Estilos base (estado default) y diferencias por estado
-	const base = perState.get("default");
+	// Estilos base (estado por defecto) y diferencias por estado
+	const base = perState.get(defName);
 	Object.assign(styles, base);
 	const variantStyles = [];
 	for (const s of new Set(states)) {
-		if (s === "default") continue;
+		if (s === defName) continue;
 		const diff = {};
 		for (const [cls, decl] of Object.entries(perState.get(s))) {
 			const b = base[cls] || {};
@@ -2155,14 +2169,18 @@ function repeatedSub(comp, parent, items, rep) {
 	}
 	for (const cls of Object.keys(styles)) if (!Object.keys(styles[cls]).length) delete styles[cls];
 
+	// Nombre: el que el diseñador les dio a los ítems; si no, el de su contenedor + Item (nav →
+	// NavItem), o el del componente si el contenedor también tiene un nombre genérico
 	const common = items.every((i) => i.name === items[0].name) && !isGeneric(items[0].name);
-	const figmaName = common ? items[0].name : `${comp.figmaName} item`;
+	const owner =
+		parent !== comp.structure && !isGeneric(parent.className) ? pascal(parent.className) : comp.name;
+	const figmaName = common ? items[0].name : `${owner} item`;
 	const sub = {
-		name: codeName(common ? items[0].name : `${comp.name} Item`),
+		name: codeName(common ? items[0].name : `${owner} Item`),
 		figmaName,
 		props,
 	};
-	if (props.state) sub.defaultVariant = { state: "default" };
+	if (props.state) sub.defaultVariant = { state: defName };
 	sub.structure = structure;
 	sub.styles = styles;
 	if (variantStyles.length) sub.variantStyles = variantStyles;
@@ -2211,28 +2229,50 @@ function repeatedSub(comp, parent, items, rep) {
 	return sub;
 }
 
-// Nombres de estado a partir de cómo se ve cada grupo frente al más numeroso (default):
-// menos opacidad → disabled; un único ítem con otro fondo → active; si no, default. Si un nombre
-// se repite se numera (disabled2, default2): son estados distintos en el diseño.
-function stateNames(groups, reps, def, styleOf) {
+// Nombres de estado. Si en el plugin se nombró algún ítem del grupo, ese nombre; si no, según
+// cómo se ve el grupo frente al más numeroso (default): menos opacidad → disabled; un único ítem
+// con otro fondo → active; si no, default. Si un nombre se repite se numera (disabled2,
+// default2): son estados distintos en el diseño.
+function stateNames(groups, reps, def, styleOf, items) {
 	const op = (el) => parseFloat(styleOf(el).opacity || "1");
 	const bg = (el) => styleOf(el)["background-color"] || styleOf(el).background || "";
-	const names = [];
-	const taken = new Set(["default"]);
-	names[def] = "default";
-	groups.forEach((g, i) => {
-		if (i === def) return;
-		const base =
-			op(reps[i]) < op(reps[def])
+	const auto = groups.map((g, i) =>
+		i === def
+			? "default"
+			: op(reps[i]) < op(reps[def])
 				? "disabled"
 				: g.length === 1 && bg(reps[i]) !== bg(reps[def])
 					? "active"
-					: "default";
+					: "default",
+	);
+	const chosen = groups.map((g) => {
+		const picked = [];
+		for (const cls of g) {
+			const id = ctx.elId.get(items.find((i) => i.className === cls));
+			const name = ctx.statesById.get(id);
+			if (name) {
+				ctx.namesUsed.add(id);
+				picked.push(name);
+			}
+		}
+		if (new Set(picked).size > 1)
+			ctx.notes.add(
+				`Ítems con el mismo estilo recibieron nombres de estado distintos en el plugin (${[...new Set(picked)].join(", ")}): se usó "${picked[0]}".`,
+			);
+		return picked[0] || null;
+	});
+	// El estado por defecto se nombra primero, así conserva su nombre si otro grupo lo repite. Los
+	// grupos que solo se parecen al de por defecto se numeran a partir de su nombre: si se eligió
+	// "normal", son normal2, normal3 (no "default", que ya no es el estado por defecto).
+	const names = [];
+	const taken = new Set();
+	for (const i of [def, ...groups.keys()].filter((i, k, a) => a.indexOf(i) === k)) {
+		const base = chosen[i] || (i !== def && auto[i] === "default" ? names[def] : auto[i]);
 		let name = base;
 		for (let n = 2; taken.has(name); n++) name = `${base}${n}`;
 		taken.add(name);
 		names[i] = name;
-	});
+	}
 	return names;
 }
 

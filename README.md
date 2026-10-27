@@ -21,6 +21,7 @@ Selecciona el componente y ejecuta **figspec export**. La ventana queda fijada e
 
 - **Componente**: el nombre en código (si en Figma se llama "Frame 1", te avisa).
 - **Nombres**: las capas con nombre vago ("Frame 5", "icon", "$1.200") con el nombre que el extractor les dará; escribe otro si quieres, o deja el campo vacío para usar la sugerencia. Al enfocar una fila (o con ⌖) la capa se centra en el lienzo sin cambiar la selección. Teclado: Enter / ↑ ↓ para moverte, Esc vuelve a la sugerencia, ⌘↵ exporta.
+- **Estados**: si hay ítems repetidos con estilos distintos (p. ej. un ítem activo y otros deshabilitados), un campo por grupo con el nombre que le dará el extractor (`active`, `disabled2`…); escribe otro si quieres. Se usan con `--extract-repeated`.
 - Si seleccionas otra capa, la ventana ofrece **Usar esta selección**.
 
 Pulsa **Exportar**: se descarga `figspec-<nombre>.json` con el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa, los nombres de las variables y los nombres elegidos. Los nombres elegidos se guardan en el archivo de Figma, así la próxima vez ya están. Si la descarga no funciona, usa **Copiar JSON** y pégalo en un archivo.
@@ -107,8 +108,8 @@ Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructur
 ```
 
 - Lo que cambia entre ítems es una prop: el texto → `label` (`label2`…), el ícono → `icon` (recibe el componente del ícono), la visibilidad → un booleano.
-- Cada grupo de estilos distinto es un estado (`state`): `default` es el grupo más numeroso, `disabled` el de menor opacidad, `active` un único ítem con otro fondo; si un nombre se repite se numera (`disabled2`). Si dos ítems difieren por una inconsistencia del diseño (p. ej. otra tipografía), aparece como un estado más: revisa `repeated` en `component.json`.
-- El subcomponente se llama como los ítems si el diseñador les puso nombre ("Tab" → `Tab`); si no, `<Componente>Item`.
+- Cada grupo de estilos distinto es un estado (`state`): `default` es el grupo más numeroso, `disabled` el de menor opacidad, `active` un único ítem con otro fondo; si un nombre se repite se numera (`disabled2`). Si dos ítems difieren por una inconsistencia del diseño (p. ej. otra tipografía), aparece como un estado más: revisa `repeated` en `component.json`. Los nombres se pueden cambiar en la ventana del plugin (también el de por defecto: si lo llamas `normal`, los parecidos pasan a `normal2`…).
+- El subcomponente se llama como los ítems si el diseñador les puso nombre ("Tab" → `Tab`); si no, como su contenedor + `Item` (`nav` → `NavItem`) o, si el contenedor también tiene un nombre genérico, `<Componente>Item`.
 - Por ahora solo en componentes sin variantes (en los demás, los repetidos se reportan pero no se extraen).
 
 ## Cómo usar la salida

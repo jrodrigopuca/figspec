@@ -74,10 +74,10 @@ async function exportWith(sim, names) {
 	return last(sim.messages, "bundle").bundle;
 }
 
-function extract(bundle) {
+function extract(bundle, args = []) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-plugin-"));
 	fs.writeFileSync(path.join(dir, "in.json"), JSON.stringify(bundle));
-	execFileSync("node", [path.join(ROOT, "extractor.js"), path.join(dir, "in.json"), "--out-dir", path.join(dir, "out")], {
+	execFileSync("node", [path.join(ROOT, "extractor.js"), path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), ...args], {
 		stdio: "pipe",
 		env: { ...process.env, FIGMA_FROM: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_EXTRACT_REPEATED: "" },
 	});
@@ -149,7 +149,7 @@ test("los nombres elegidos viajan en el paquete (figspec 2) y se recuerdan al re
 	const frame9 = rows.find((r) => r.name === "Frame 9");
 	const bundle = await exportWith(sim, { root: "Nav", byId: { [frame9.id]: "intro card", [rows[0].id]: "" } });
 	assert.equal(bundle.figspec, 2);
-	assert.deepEqual(bundle.names, { root: "Nav", byId: { [frame9.id]: "intro card" } });
+	assert.deepEqual(bundle.names, { root: "Nav", byId: { [frame9.id]: "intro card" }, states: {} });
 
 	const again = simulate(doc, store);
 	await tick();
@@ -160,4 +160,60 @@ test("los nombres elegidos viajan en el paquete (figspec 2) y se recuerdan al re
 	const { spec, byName } = extract(bundle);
 	assert.equal(spec.component.name, "Nav");
 	assert.equal(byName.find((e) => e.name === "Frame 9").className, "introCard");
+});
+
+// ---------------------------------------------------------------- estados de los repetidos
+// Ítems iguales salvo el estilo: uno con fondo oscuro, uno con opacidad, uno con otra tipografía,
+// uno con otro color de texto. El plugin agrupa por las propiedades de Figma y el extractor por el
+// CSS que genera: tienen que dar los mismos grupos y los mismos nombres automáticos.
+function statesDoc() {
+	const solid = (r, g, b) => [{ type: "SOLID", color: { r, g, b, a: 1 } }];
+	const label = (s, style = {}, fills = solid(0.3, 0.3, 0.3)) => ({ ...T(s), fills, style: { fontFamily: "Inter", fontWeight: 700, fontSize: 12, ...style } });
+	const item = (s, extra = {}, text = {}) => F("Frame 2", "HORIZONTAL", [V("icon"), label(s, text.style, text.fills)], extra);
+	return F("Nav", "VERTICAL", [
+		item("Inicio", { fills: solid(0, 0, 0) }, { fills: solid(1, 1, 1) }),
+		item("Perfil"),
+		item("Ajustes"),
+		item("Ayuda", { opacity: 0.4 }),
+		item("Historial", {}, { style: { fontFamily: "Roboto", fontWeight: 500, fontSize: 14 } }),
+		item("Salir", {}, { fills: solid(0.8, 0, 0) }),
+	]);
+}
+
+test("estados: el plugin agrupa y nombra igual que el extractor", async () => {
+	const doc = statesDoc();
+	const sim = simulate(doc);
+	await tick();
+	const [rep] = last(sim.messages, "analysis").repeats;
+	const pluginState = {};
+	for (const g of rep.groups) for (const label of g.labels) pluginState[label] = g.auto;
+
+	const bundle = await exportWith(sim, { root: "", byId: {}, states: {} });
+	const { spec } = extract(bundle, ["--extract-repeated"]);
+	const extractorState = Object.fromEntries(spec.component.structure.children.map((u) => [u.props.label, u.props.state]));
+	assert.deepEqual(pluginState, extractorState);
+	assert.deepEqual(Object.values(extractorState), ["active", "default", "default", "disabled", "default2", "default3"]);
+});
+
+test("estados: los nombres elegidos viajan por ítem, se recuerdan y el extractor los usa", async () => {
+	const doc = statesDoc();
+	const store = new Map();
+	const sim = simulate(doc, store);
+	await tick();
+	const [rep] = last(sim.messages, "analysis").repeats;
+	const want = { active: "current", default: "normal", disabled: "" };
+	const states = {};
+	for (const g of rep.groups) for (const id of g.ids) states[id] = want[g.auto] || "";
+	const bundle = await exportWith(sim, { root: "", byId: {}, states });
+	assert.equal(Object.keys(bundle.names.states).length, 3, "solo los ítems con nombre (Inicio, Perfil, Ajustes)");
+
+	const again = simulate(doc, store);
+	await tick();
+	const groups = last(again.messages, "analysis").repeats[0].groups;
+	assert.deepEqual(groups.map((g) => g.value), ["current", "normal", "", "", ""]);
+
+	const { spec } = extract(bundle, ["--extract-repeated"]);
+	const sub = Object.values(spec.subcomponents)[0];
+	assert.equal(sub.props.state.default, "normal", "el estado por defecto también se puede renombrar");
+	assert.deepEqual(sub.props.state.options, ["normal", "current", "disabled", "normal2", "normal3"], "los parecidos al de por defecto se numeran desde su nombre");
 });
