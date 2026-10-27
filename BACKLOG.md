@@ -111,7 +111,11 @@ carpeta aparte):
   offset 16,12 en 344×924 = preview.png; login 0,0 en 1440×900). `meta.format: 1` en component.json. Pruebas con node --test (render,
   prefijado de CSS, paridad, integración, hit-test); captura visual manual opcional.
   _Plan:_ ~~1 meta.format/meta.preview~~ (hecho: `meta.format: 1` siempre, `meta.preview` con el
-  PNG del plugin; salida idéntica a la anterior fuera de `meta`) · 2 spec.js · 3 esqueleto viewer.js · 4 render real (validar
+  PNG del plugin; salida idéntica a la anterior fuera de `meta`) · ~~2 spec.js~~ (hecho: `spec.js` con la
+  interpretación compartida — condiciones, casos por variante, estructura activa, valores por
+  defecto, grupos para `.map`, nombres —; react.js lo usa y su salida es idéntica byte a byte en
+  los 24 casos de prueba y reales; `test/spec.test.js` evalúa el TSX generado y comprueba la
+  paridad, también con casos superpuestos) · 3 esqueleto viewer.js · 4 render real (validar
   con menu mobile y login antes de seguir) · 5 comparación · 6 árbol + hit-test · 7 inspector ·
   8 aviso de fuentes + README.
   _Después (2b+):_ `figma-geometry.json` (caja de Figma por nodo, clave por ruta de índices) con
@@ -122,6 +126,11 @@ carpeta aparte):
   autocontenido (~3 MB en el login); (5) sin Google Fonts al principio; (6) figmaBox en
   figma-geometry.json, en 2b; (7) recortes al diseño (panel "Diseño en idioma Figma", ajuste
   manual, punto ámbar, filtro del árbol, apilado automático); (8) preview por variante = figspec 3.
+  _Pendiente (encontrado en el paso 2):_ `resolvedText` del extractor (extracción de repetidos)
+  deja ganar al último caso y compara con `===`; React y `spec.js` dejan ganar al primero y
+  comparan como texto. Hoy da lo mismo porque `diffStyles` no genera casos superpuestos para una
+  misma clase y propiedad (agrupa por una sola prop o por la combinación completa, nunca ambas).
+  Unificar con `spec.pickCase` cuando se toque esa parte, con una prueba de casos superpuestos.
   _Límite:_ reproduce el componente desde la misma especificación (mismo CSS), no ejecuta React.
 **Límites conocidos**
 - [ ] `id` internos de un SVG (clipPath, mask) repetidos si el ícono aparece varias veces.

@@ -12,12 +12,19 @@
 
 const fs = require("fs");
 const path = require("path");
-
-const RESERVED = new Set(
-	"break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static implements interface package private protected public await"
-		.split(" "),
-);
-const IDENT = /^[A-Za-z_$][\w$]*$/;
+const {
+	RESERVED,
+	IDENT,
+	textCases,
+	propCases,
+	baseText,
+	cssClasses,
+	propDefaults,
+	extractedRun,
+	pascal,
+	camelSafe,
+	kebab,
+} = require("./spec");
 
 // part: subcarpeta del componente; las rutas de component.json la incluyen (Frame1/assets/…) y
 // los .tsx, que viven dentro, las importan relativas a ella. write recibe rutas relativas a part.
@@ -72,7 +79,9 @@ function componentModule(comp, env) {
 	);
 	const main = renderEl(comp.structure, g, 4, true);
 
-	const defaults = propDefaults(comp);
+	const defaults = Object.fromEntries(
+		Object.entries(propDefaults(comp)).map(([p, v]) => [p, JSON.stringify(v)]),
+	);
 	const typeLines = Object.entries(comp.props || {}).map(
 		([p, def]) => `  ${IDENT.test(p) ? p : JSON.stringify(p)}?: ${tsType(def, g)};`,
 	);
@@ -119,14 +128,6 @@ function componentModule(comp, env) {
 	);
 }
 
-// Clases que existen en el CSS Module (base o en alguna regla de variante)
-function cssClasses(comp) {
-	const out = new Set(Object.keys(comp.styles || {}));
-	for (const r of comp.variantStyles || [])
-		for (const c of Object.keys(r.styles || {})) out.add(c);
-	return out;
-}
-
 function tsType(def, g) {
 	if (def.type === "variant")
 		return def.options && def.options.length
@@ -143,34 +144,6 @@ function tsType(def, g) {
 		return "ComponentType<SVGProps<SVGSVGElement>>";
 	}
 	return "unknown";
-}
-
-// Valores por defecto: los de Figma; si no vienen (subcomponentes), los del propio diseño.
-function propDefaults(comp) {
-	const out = {};
-	const found = {};
-	(function scan(el) {
-		if (el.bind && el.bind.visible && !(el.bind.visible in found))
-			found[el.bind.visible] = !el.hidden;
-		// Sin texto en el diseño (p. ej. el label de un ítem extraído) no hay valor por defecto
-		if (el.bind && el.bind.text && !(el.bind.text in found) && (el.text !== undefined || el.segments))
-			found[el.bind.text] = el.text !== undefined
-				? el.text
-				: el.segments.map((s) => s.text).join("");
-		(el.children || []).forEach(scan);
-	})(comp.structure);
-	for (const [p, def] of Object.entries(comp.props || {})) {
-		let v;
-		if (def.type === "variant")
-			v =
-				(comp.defaultVariant && comp.defaultVariant[p]) ??
-				def.default ??
-				(def.options || [])[0];
-		else if (def.type === "boolean" || def.type === "string")
-			v = def.default !== undefined ? def.default : found[p];
-		if (v !== undefined) out[p] = JSON.stringify(v);
-	}
-	return out;
 }
 
 // ---------------------------------------------------------------- JSX
@@ -221,7 +194,7 @@ function renderBox(el, g, n, isRoot) {
 	if (text) kids.push(...text.map((t) => pad(n + 2) + t));
 	const children = el.children || [];
 	for (let i = 0; i < children.length; i++) {
-		const run = extractedRun(children, i, g);
+		const run = extractedRun(children, i, g.env.subs);
 		if (run) {
 			kids.push(renderList(run, g, n + 2));
 			i += run.length - 1;
@@ -234,11 +207,9 @@ function renderBox(el, g, n, isRoot) {
 // Contenido de un texto: prop enlazada, texto que cambia por variante, segmentos o literal
 function textContent(el, g) {
 	if (el.bind && el.bind.text) return [`{${useVar(el.bind.text, g)}}`];
-	const cases = variantCases(g.comp.variantText, el.className, (r) => r.text);
-	if (cases.length) {
-		const base = el.text !== undefined ? el.text : (el.segments || []).map((s) => s.text).join("");
-		return [`{${ternary(cases, JSON.stringify(base), g, (v) => JSON.stringify(v))}}`];
-	}
+	const cases = textCases(g.comp, el);
+	if (cases.length)
+		return [`{${ternary(cases, JSON.stringify(baseText(el)), g, (v) => JSON.stringify(v))}}`];
 	if (el.segments)
 		return el.segments.map((s) =>
 			s.css ? `<span style={${styleObject(s.css)}}>${literal(s.text)}</span>` : literal(s.text),
@@ -248,22 +219,7 @@ function textContent(el, g) {
 }
 
 // ---------------------------------------------------------------- listas de ítems extraídos
-// Instancias seguidas de un mismo subcomponente extraído (--extract-repeated) con la misma clase de
-// ubicación: se renderizan con .map sobre un array de datos. Si están intercaladas con otros
-// elementos o cada una tiene su propia ubicación, se dejan como instancias explícitas.
-function extractedRun(children, i, g) {
-	const first = children[i];
-	const sub = first.component && g.env.subs[first.component];
-	if (!sub || !sub.extractedFrom || (first.bind && (first.bind.visible || first.bind.swap))) return null;
-	const same = (c) => c.component === first.component && c.className === first.className && !c.bind;
-	let j = i;
-	while (j < children.length && same(children[j])) j++;
-	// Todo el grupo tiene que estar junto: si hay otro ítem del mismo grupo más adelante, la prop
-	// de la lista cubriría solo una parte, así que quedan todos como instancias explícitas
-	if (children.slice(j).some(same) || children.slice(0, i).some(same)) return null;
-	return j - i >= 2 ? children.slice(i, j) : null;
-}
-
+// Los grupos los detecta extractedRun (spec.js); aquí se escriben como .map sobre un array
 function renderList(run, g, n) {
 	const first = run[0];
 	g.components.add(first.component);
@@ -299,7 +255,7 @@ function renderInstance(el, g, n) {
 	const attrs = [classAttr(el, g, false)];
 	for (const [k, v] of Object.entries(el.props || {})) {
 		const type = (defs[k] || {}).type;
-		const cases = variantCases(g.comp.variantProps, el.className, (r) => r.props, k);
+		const cases = propCases(g.comp, el, k);
 		const val = (x) => propValue(x, type, g);
 		const base = val(v);
 		if (cases.length) {
@@ -370,18 +326,7 @@ function member(cls) {
 }
 
 // ---------------------------------------------------------------- condiciones por variante
-// Casos { when, value } de variantText / variantProps para una clase (y una prop, si aplica)
-function variantCases(rules, cls, pick, key) {
-	const out = [];
-	for (const r of rules || []) {
-		const m = pick(r) || {};
-		if (!(cls in m)) continue;
-		if (key === undefined) out.push({ when: r.when, value: m[cls] });
-		else if (m[cls] && key in m[cls]) out.push({ when: r.when, value: m[cls][key] });
-	}
-	return out;
-}
-
+// Cadena de ternarios: gana el primer caso que se cumple (como pickCase en spec.js)
 function ternary(cases, base, g, fmt) {
 	return cases.reduceRight(
 		(acc, c) => `${condition(c.when, g)} ? ${fmt(c.value)} : ${acc}`,
@@ -503,26 +448,6 @@ function indent(s, n) {
 		.split("\n")
 		.map((l) => pad(n) + l)
 		.join("\n");
-}
-
-function words(s) {
-	return String(s)
-		.normalize("NFD")
-		.replace(/[̀-ͯ]/g, "")
-		.split(/[^A-Za-z0-9]+/)
-		.filter(Boolean);
-}
-function pascal(s) {
-	return words(s)
-		.map((w) => w[0].toUpperCase() + w.slice(1))
-		.join("");
-}
-function camelSafe(s) {
-	const p = pascal(s);
-	return p ? p[0].toLowerCase() + p.slice(1) : "prop";
-}
-function kebab(s) {
-	return words(s).join("-").toLowerCase();
 }
 
 module.exports = { generateReact };
