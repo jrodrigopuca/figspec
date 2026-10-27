@@ -205,6 +205,45 @@ test("extracción: en un componente con variantes solo se reporta", () => {
 	assert.ok(r.spec.meta.notes.some((n) => /solo se reportan/.test(n)));
 });
 
+// ---------------------------------------------------------------- nombres elegidos en el plugin (figspec 2)
+const v2 = (doc, names) => ({ figspec: 2, name: doc.name, nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {}, names });
+
+test("plugin: los nombres elegidos tienen prioridad sobre la sugerencia; la raíz sale de names.root", () => {
+	const doc = F("Frame 1", "VERTICAL", [F("Frame 5", "HORIZONTAL", [T("Benefits")]), F("Frame 6", "HORIZONTAL", [T("Logs")])]);
+	const [f5] = doc.children;
+	const r = extract(doc, [], v2(doc, { root: "SideMenu", byId: { [f5.id]: "benefits link" } }));
+	assert.equal(r.spec.component.name, "SideMenu");
+	assert.equal(r.cls("Frame 5"), "benefitsLink");
+	assert.equal(r.cls("Frame 6"), "logsRow", "sin nombre elegido, la sugerencia");
+	assert.equal(r.spec.meta.notes.some((n) => n.includes("--name")), false, "con nombre elegido no hay aviso de raíz genérica");
+});
+
+test("plugin: --name tiene prioridad sobre names.root", () => {
+	const doc = F("Frame 1", "VERTICAL", [T("Hola")]);
+	const r = extract(doc, ["--name", "Otro"], v2(doc, { root: "SideMenu", byId: {} }));
+	assert.equal(r.spec.component.name, "Otro");
+});
+
+test("plugin: un nombre elegido para un ícono también nombra su archivo", () => {
+	const doc = F("Toolbar", "HORIZONTAL", [V("icon"), T("Inicio")]);
+	const bundle = { ...bundleWithIcons(doc, () => '<svg><path d="M1 1"/></svg>'), figspec: 2, names: { byId: { [doc.children[0].id]: "home icon" } } };
+	const r = extract(doc, [], bundle);
+	const icon = r.classes.find((c) => c[0] === "icon");
+	assert.equal(icon[1], "homeIcon");
+	assert.match(icon[2], /\/home-icon\.svg$/);
+});
+
+test("plugin: los nombres que no corresponden a ninguna capa se avisan", () => {
+	const doc = F("Card", "VERTICAL", [T("Hola")]);
+	const r = extract(doc, [], v2(doc, { byId: { "999:1": "fantasma" } }));
+	assert.ok(r.spec.meta.notes.some((n) => n.includes("999:1 → fantasma")));
+});
+
+test("plugin: un paquete de una versión más nueva falla con un mensaje claro", () => {
+	const doc = F("Card", "VERTICAL", [T("Hola")]);
+	assert.throws(() => extract(doc, [], { ...v2(doc, {}), figspec: 3 }), /figspec 3[\s\S]*actualízalo/);
+});
+
 // ---------------------------------------------------------------- raíz y variantes
 test("la raíz nunca se renombra sola; --name la elige", () => {
 	const doc = F("Frame 1", "HORIZONTAL", [T("Hola")]);

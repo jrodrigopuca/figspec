@@ -1,37 +1,109 @@
 <style>
 	/* Colores del tema de Figma (claro u oscuro), inyectados con themeColors: true en code.js */
-	body { font: 12px/1.4 Inter, system-ui, sans-serif; margin: 12px; color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff); }
-	#sel { font-weight: 600; margin-bottom: 8px; min-height: 17px; }
-	label { display: block; margin: 4px 0; }
+	* { box-sizing: border-box; }
+	html, body { height: 100%; margin: 0; }
+	body {
+		font: 11px/16px Inter, system-ui, sans-serif;
+		color: var(--figma-color-text, #222);
+		background: var(--figma-color-bg, #fff);
+		display: flex; flex-direction: column;
+	}
+	.band { padding: 10px 12px; }
+	.top { border-bottom: 1px solid var(--figma-color-border, #e5e5e5); }
+	.bottom { border-top: 1px solid var(--figma-color-border, #e5e5e5); }
+	.muted { color: var(--figma-color-text-secondary, #777); }
+	.warn { color: var(--figma-color-text-warning, #b86200); }
+	.root-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.field { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+	.field label { width: 78px; flex-shrink: 0; }
+	input[type="text"] {
+		flex: 1; min-width: 0; height: 26px; padding: 0 7px; font: inherit;
+		color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff);
+		border: 1px solid var(--figma-color-border, #ddd); border-radius: 4px;
+	}
+	input[type="text"]:focus { outline: none; border-color: var(--figma-color-border-selected, #0d99ff); }
+	/* La sugerencia es el valor que se usará: se lee como valor, no como pista tenue */
+	input[type="text"]::placeholder { color: var(--figma-color-text-secondary, #777); }
 	input[type="checkbox"] { accent-color: var(--figma-color-bg-brand, #0d99ff); }
-	button { margin-top: 8px; margin-right: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--figma-color-border, #ccc); background: var(--figma-color-bg, #fff); color: var(--figma-color-text, #222); cursor: pointer; }
-	button:hover:not(:disabled) { background: var(--figma-color-bg-hover, #f5f5f5); }
-	button.primary { background: var(--figma-color-bg-brand, #0d99ff); border-color: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff); }
+	#banner { display: none; margin-top: 8px; padding: 6px 8px; border-radius: 4px; background: var(--figma-color-bg-secondary, #f5f5f5); }
+	.list-head { display: flex; justify-content: space-between; padding: 8px 12px 4px; }
+	#list { flex: 1; overflow-y: auto; padding: 0 12px 8px; }
+	.row { display: flex; align-items: center; gap: 6px; min-height: 30px; border-radius: 4px; padding: 0 2px; }
+	.row:focus-within { background: var(--figma-color-bg-selected, #e5f4ff); }
+	.glyph { width: 14px; text-align: center; color: var(--figma-color-icon, #555); flex-shrink: 0; }
+	.who { width: 120px; flex-shrink: 0; overflow: hidden; }
+	.who b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.who span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.locate { width: 24px; height: 24px; border: none; background: none; color: var(--figma-color-icon, #555); cursor: pointer; border-radius: 4px; flex-shrink: 0; }
+	.locate:hover { background: var(--figma-color-bg-hover, #f0f0f0); }
+	.empty { padding: 24px 12px; text-align: center; }
+	.opts { display: flex; gap: 12px; }
+	.opts label { display: flex; align-items: center; gap: 4px; }
+	.actions { display: flex; gap: 8px; margin-top: 8px; }
+	button.btn { height: 28px; padding: 0 12px; border-radius: 6px; font: inherit; font-weight: 500; cursor: pointer;
+		border: 1px solid var(--figma-color-border, #ccc); background: var(--figma-color-bg, #fff); color: var(--figma-color-text, #222); }
+	button.btn:hover:not(:disabled) { background: var(--figma-color-bg-hover, #f5f5f5); }
+	button.primary { flex: 1; background: var(--figma-color-bg-brand, #0d99ff); border-color: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff); }
+	button.primary:hover:not(:disabled) { background: var(--figma-color-bg-brand-hover, #0b88e6); }
 	button:disabled { opacity: 0.5; cursor: default; }
-	#status { margin-top: 10px; color: var(--figma-color-text-secondary, #555); white-space: pre-wrap; }
-	#status.error { color: var(--figma-color-text-danger, #c00); }
 	#copy { display: none; }
+	#status { margin-top: 6px; white-space: pre-wrap; min-height: 16px; }
+	#status.error { color: var(--figma-color-text-danger, #c00); }
 </style>
 
-<div id="sel">Selecciona un elemento</div>
-<label><input type="checkbox" id="assets" checked /> Íconos (SVG) e imágenes</label>
-<label><input type="checkbox" id="png" checked /> Vista previa (PNG)</label>
-<button class="primary" id="export" disabled>Exportar</button>
-<button id="copy">Copiar al portapapeles</button>
-<div id="status"></div>
+<div class="band top">
+	<div class="root-name" id="rootName">Selecciona un frame o componente</div>
+	<div class="field" id="rootField" hidden>
+		<label for="rootInput">Componente</label>
+		<input type="text" id="rootInput" spellcheck="false" />
+	</div>
+	<div class="warn" id="rootWarn" hidden>⚠ "<span id="rootFigma"></span>" es un nombre genérico: elige uno.</div>
+	<div id="banner">Seleccionaste "<span id="other"></span>". <button class="btn" id="useSel">Usar esta selección</button></div>
+</div>
+
+<div class="list-head" id="listHead" hidden>
+	<span><b>Nombres</b> <span class="muted" id="count"></span></span>
+	<span class="muted">vacío = sugerencia</span>
+</div>
+<div id="list"></div>
+
+<div class="band bottom">
+	<div class="opts">
+		<label><input type="checkbox" id="assets" checked /> Íconos e imágenes</label>
+		<label><input type="checkbox" id="png" checked /> Vista previa PNG</label>
+	</div>
+	<div class="actions">
+		<button class="btn primary" id="export" disabled>Exportar</button>
+		<button class="btn" id="copy">Copiar JSON</button>
+	</div>
+	<div id="status" class="muted"></div>
+</div>
 
 <script>
 	const $ = (id) => document.getElementById(id);
+	const GLYPH = { frame: "#", icon: "◇", text: "T", instance: "◆" };
+	let rows = [];
 	let lastJson = null;
+	let busy = false;
+
+	const send = (msg) => parent.postMessage({ pluginMessage: msg }, "*");
+
+	$("useSel").onclick = () => send({ type: "use-selection" });
 
 	$("export").onclick = () => {
+		if (busy) return;
+		busy = true;
 		$("export").disabled = true;
+		$("export").textContent = "Exportando…";
 		$("copy").style.display = "none";
-		status("Exportando…");
-		parent.postMessage(
-			{ pluginMessage: { type: "export", options: { assets: $("assets").checked, png: $("png").checked } } },
-			"*",
-		);
+		document.querySelectorAll("#list input").forEach((i) => (i.disabled = true));
+		const byId = {};
+		for (const r of rows) byId[r.id] = $(`in-${r.id}`).value.trim();
+		send({
+			type: "export",
+			options: { assets: $("assets").checked, png: $("png").checked },
+			names: { root: $("rootInput").value.trim(), byId },
+		});
 	};
 
 	// Si la descarga no funciona en tu versión de Figma, el JSON se puede copiar y pegar en un archivo
@@ -45,26 +117,103 @@
 		status(ok ? "Copiado. Pégalo en un archivo .json." : "No se pudo copiar.", !ok);
 	};
 
+	// ⌘↵ / Ctrl+↵ exporta desde cualquier campo
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !$("export").disabled) $("export").click();
+	});
+
 	onmessage = (e) => {
 		const msg = e.data.pluginMessage;
 		if (!msg) return;
-		if (msg.type === "selection") {
-			$("sel").textContent =
-				msg.count === 1 ? msg.name : msg.count ? `${msg.count} elementos: selecciona uno solo` : "Selecciona un elemento";
-			$("export").disabled = msg.count !== 1;
+		if (msg.type === "analysis") render(msg);
+		else if (msg.type === "empty") renderEmpty(msg.count);
+		else if (msg.type === "selection") {
+			$("banner").style.display = msg.other ? "block" : "none";
+			$("other").textContent = msg.other || "";
 		} else if (msg.type === "progress") status(msg.text);
 		else if (msg.type === "error") {
 			status(msg.message, true);
-			$("export").disabled = false;
+			done();
 		} else if (msg.type === "bundle") save(msg.bundle);
 	};
+
+	function renderEmpty(count) {
+		rows = [];
+		$("rootName").textContent = count ? `${count} capas seleccionadas: selecciona una sola` : "Selecciona un frame o componente";
+		$("rootField").hidden = $("rootWarn").hidden = $("listHead").hidden = true;
+		$("list").innerHTML = "";
+		$("export").disabled = true;
+		status("");
+	}
+
+	function render({ root, rows: list }) {
+		rows = list;
+		$("banner").style.display = "none";
+		$("rootName").textContent = `▣ ${root.name}`;
+		$("rootField").hidden = false;
+		const input = $("rootInput");
+		input.value = root.value;
+		input.placeholder = root.generic ? "p. ej. SideMenu" : pascal(root.name);
+		const warn = () => ($("rootWarn").hidden = !(root.generic && !input.value.trim()));
+		input.oninput = warn;
+		$("rootFigma").textContent = root.name;
+		warn();
+
+		$("listHead").hidden = false;
+		$("count").textContent = list.length ? `${list.length} con nombre vago` : "";
+		const box = $("list");
+		box.innerHTML = "";
+		if (!list.length) {
+			box.innerHTML = '<div class="empty muted">Todas las capas tienen nombres útiles ✓</div>';
+		}
+		list.forEach((r, i) => {
+			const row = document.createElement("div");
+			row.className = "row";
+			const context = r.kind === "icon" ? (r.context ? `junto a "${r.context}"` : `en ${r.parent}`) : r.context ? `"${r.context}"` : `en ${r.parent}`;
+			row.innerHTML =
+				`<span class="glyph" title="${r.kind}">${GLYPH[r.kind] || "#"}</span>` +
+				`<span class="who"><b></b><span class="muted"></span></span>` +
+				`<input type="text" id="in-${r.id}" spellcheck="false" />` +
+				`<button class="locate" title="Ubicar en el lienzo">⌖</button>`;
+			row.querySelector("b").textContent = r.name;
+			row.querySelector(".who .muted").textContent = context;
+			const field = row.querySelector("input");
+			field.value = r.value;
+			field.placeholder = r.suggestion;
+			// Al enfocar una fila se centra su capa (sin cambiar la selección)
+			field.onfocus = () => send({ type: "locate", id: r.id });
+			field.onkeydown = (e) => {
+				if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+					e.preventDefault();
+					const next = $(`in-${(list[i + 1] || {}).id}`);
+					if (next) next.focus();
+				} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+					e.preventDefault();
+					const other = $(`in-${(list[i + (e.key === "ArrowDown" ? 1 : -1)] || {}).id}`);
+					if (other) other.focus();
+				} else if (e.key === "Escape") field.value = ""; // vuelve a la sugerencia
+			};
+			row.querySelector(".locate").onclick = () => send({ type: "locate", id: r.id });
+			box.appendChild(row);
+		});
+		done();
+		status("");
+	}
+
+	function done() {
+		busy = false;
+		$("export").disabled = !rows || $("rootField").hidden;
+		$("export").textContent = "Exportar";
+		document.querySelectorAll("#list input").forEach((i) => (i.disabled = false));
+	}
 
 	function save(bundle) {
 		// Los binarios (Uint8Array) viajan como base64 dentro del JSON
 		for (const k of Object.keys(bundle.images)) bundle.images[k] = base64(bundle.images[k]);
 		if (bundle.preview) bundle.preview = base64(bundle.preview);
 		lastJson = JSON.stringify(bundle);
-		const file = `figspec-${slug(bundle.name) || "export"}.json`;
+		const name = (bundle.names && bundle.names.root) || bundle.name;
+		const file = `figspec-${slug(name) || "export"}.json`;
 		const a = document.createElement("a");
 		a.href = URL.createObjectURL(new Blob([lastJson], { type: "application/json" }));
 		a.download = file;
@@ -72,13 +221,14 @@
 		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 		const icons = Object.keys(bundle.icons).length;
 		const images = Object.keys(bundle.images).length;
+		const named = Object.keys(bundle.names.byId).length;
 		status(
 			`Listo: ${file} (${Math.ceil(lastJson.length / 1024)} KB)\n` +
-				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}.\n` +
-				`node extractor.js --from ${file} --assets`,
+				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}, ${named} nombre(s) elegidos.\n` +
+				`node extractor.js ${file}`,
 		);
 		$("copy").style.display = "inline-block";
-		$("export").disabled = false;
+		done();
 	}
 
 	function base64(bytes) {
@@ -88,17 +238,18 @@
 		return btoa(s);
 	}
 
+	function words(s) {
+		return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^A-Za-z0-9]+/).filter(Boolean);
+	}
+	function pascal(s) {
+		return words(s).map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+	}
 	function slug(s) {
-		return String(s)
-			.normalize("NFD")
-			.replace(/[̀-ͯ]/g, "")
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.replace(/^-|-$/g, "");
+		return words(s).join("-").toLowerCase();
 	}
 
 	function status(text, error) {
 		$("status").textContent = text;
-		$("status").className = error ? "error" : "";
+		$("status").className = error ? "error" : "muted";
 	}
 </script>

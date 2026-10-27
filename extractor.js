@@ -131,6 +131,8 @@ const ctx = {
 	shallowSubs: new Map(), // id de componente → nombre en código (con --shallow)
 	codeNames: new Set(), // nombres de componente ya usados (en minúsculas: archivos en macOS/Windows)
 	renamed: new Map(), // clase sugerida → nombre genérico de Figma (para avisar en notes)
+	namesById: new Map(), // nodeId → nombre elegido en el plugin (names.byId del paquete)
+	namesUsed: new Set(), // ids de namesById que se aplicaron (para avisar de los sobrantes)
 	elSignature: new WeakMap(), // elemento de structure → firma estructural de su capa
 	icons: new Map(), // componentId | node.id → { name, id, file }
 	iconFiles: new Map(), // nombre de archivo → veces usado
@@ -164,10 +166,18 @@ function main() {
 	ctx.fileKey = "(local)";
 	// Paquete del plugin: trae además íconos, imágenes, vista previa y nombres de variables
 	if (data.figspec) {
+		// 1: paquete básico · 2: además, nombres elegidos en la ventana del plugin (names)
+		if (!(data.figspec >= 1 && data.figspec <= 2))
+			fail(
+				`${opts.from} es un paquete figspec ${data.figspec}, más nuevo que este extractor: actualízalo.`,
+			);
 		ctx.bundle = data;
 		nodeId = data.nodeId || nodeId;
 		ctx.fileKey = data.fileKey || "(plugin)";
 		for (const v of Object.values(data.variables || {})) ctx.variables[v.id] = v;
+		const names = data.names || {};
+		ctx.namesById = new Map(Object.entries(names.byId || {}).filter(([, v]) => v));
+		if (!opts.name && names.root) opts.name = names.root; // --name tiene prioridad
 		console.error(
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
@@ -636,7 +646,8 @@ function walk(node, parent, pctx, state, root, path = "") {
 				node.name,
 				path,
 				state.reg,
-				vagueName(node) ? () => suggestName(node, parent, iconLike) : null,
+				chosenName(node) ||
+					(vagueName(node) ? () => suggestName(node, parent, iconLike) : null),
 			);
 	state.classes.add(el.className);
 	if (node.visible === false) el.hidden = true;
@@ -1365,7 +1376,9 @@ function iconFor(node, parent) {
 		suggested = false;
 	// Nombre neutro: el de la capa, o "icon" si es genérico ("Group 1", "Vector")
 	const layer = isGeneric(node.name) ? "icon" : node.name;
-	if (node.type !== "INSTANCE" && isGeneric(node.name)) {
+	const chosen = ctx.namesById.get(node.id); // elegido en el plugin
+	if (node.type !== "INSTANCE" && chosen) name = chosen;
+	else if (node.type !== "INSTANCE" && isGeneric(node.name)) {
 		const near = textNear(node, parent);
 		[name, suggested] = near ? [near, true] : [layer, false];
 	}
@@ -1606,9 +1619,14 @@ function notes(subs) {
 	if (ctx.renamed.size) {
 		const list = [...ctx.renamed].map(([cls, from]) => `${from} → ${cls}`);
 		n.push(
-			`Capas con nombre genérico renombradas (según su texto o su tipo): ${list.slice(0, 12).join(", ")}${list.length > 12 ? `… (${list.length})` : ""}. Para otro nombre, renómbralas en Figma.`,
+			`Capas renombradas (con el nombre elegido en el plugin o según su texto o su tipo): ${list.slice(0, 12).join(", ")}${list.length > 12 ? `… (${list.length})` : ""}. Para otro nombre, usa la ventana del plugin o renómbralas en Figma.`,
 		);
 	}
+	const unused = [...ctx.namesById.keys()].filter((id) => !ctx.namesUsed.has(id));
+	if (unused.length)
+		n.push(
+			`${unused.length} nombre(s) elegidos en el plugin no corresponden a ninguna capa exportada (¿cambió el diseño?): ${unused.slice(0, 5).map((id) => `${id} → ${ctx.namesById.get(id)}`).join(", ")}.`,
+		);
 	if (ctx.unnamedVars)
 		n.push(
 			"Hay valores enlazados a variables cuyo nombre no se pudo leer (la API de variables requiere plan Enterprise); se usan los valores directos.",
@@ -1776,6 +1794,15 @@ function classFor(name, path, reg, suggest) {
 	reg.byPath.set(path, cls);
 	if (better && camel(better) !== camel(name)) ctx.renamed.set(cls, name); // "Icon" → icon no es renombre
 	return cls;
+}
+
+// Nombre elegido para la capa en la ventana del plugin (tiene prioridad sobre la sugerencia).
+// Se busca por id; como la clase se registra por ruta, vale para todas las variantes.
+function chosenName(node) {
+	const name = ctx.namesById.get(node.id);
+	if (!name) return null;
+	ctx.namesUsed.add(node.id);
+	return () => name;
 }
 
 // Agrega un número si el nombre ya está tomado (icon → icon2). Si el nombre termina en dígito

@@ -17,7 +17,13 @@ Los plugins solo están disponibles en archivos donde tienes **permiso de edici�
 
 ## 2. Exportar el componente
 
-Selecciona el componente, ejecuta **figspec export** y pulsa **Exportar**. Se descarga `figspec-<nombre>.json` con todo lo necesario: el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa y los nombres de las variables. Si la descarga no funciona, usa **Copiar al portapapeles** y pégalo en un archivo.
+Selecciona el componente y ejecuta **figspec export**. La ventana queda fijada en esa selección y muestra:
+
+- **Componente**: el nombre en código (si en Figma se llama "Frame 1", te avisa).
+- **Nombres**: las capas con nombre vago ("Frame 5", "icon", "$1.200") con el nombre que el extractor les dará; escribe otro si quieres, o deja el campo vacío para usar la sugerencia. Al enfocar una fila (o con ⌖) la capa se centra en el lienzo sin cambiar la selección. Teclado: Enter / ↑ ↓ para moverte, Esc vuelve a la sugerencia, ⌘↵ exporta.
+- Si seleccionas otra capa, la ventana ofrece **Usar esta selección**.
+
+Pulsa **Exportar**: se descarga `figspec-<nombre>.json` con el nodo (en el formato de la API REST, `JSON_REST_V1`), los íconos, las imágenes, la vista previa, los nombres de las variables y los nombres elegidos. Los nombres elegidos se guardan en el archivo de Figma, así la próxima vez ya están. Si la descarga no funciona, usa **Copiar JSON** y pégalo en un archivo.
 
 ## 3. Generar la salida
 
@@ -68,7 +74,7 @@ Las clases, los íconos y los componentes toman el nombre de las capas de Figma.
 | Texto que no sirve de nombre ("$1.200", "••••", un párrafo, un email) | `text`, `text2`… |
 | Frame con dos o más textos (título y descripción, nombre y email) | se conserva ("frame11"): es contenido, no una etiqueta |
 
-- Los nombres puestos por el diseñador no se tocan; los renombres quedan listados en `meta.notes`. Para otro nombre, renombra la capa en Figma.
+- Los nombres puestos por el diseñador no se tocan; los renombres quedan listados en `meta.notes`. Para otro nombre, escríbelo en la ventana del plugin (o renombra la capa en Figma).
 - El componente raíz **nunca** se renombra solo: si se llama "Frame 1", el extractor avisa y lo eliges con `--name`.
 - En un set de variantes, los nombres salen de la variante por defecto.
 

@@ -205,10 +205,21 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
   _Hallazgo en el menú real:_ 5 grupos en vez de 3 (activo / normal / deshabilitado) porque "Pack" y
   "Logs" tienen otra tipografía (500 · 14px contra 700 · 12px): no tienen el estilo de texto
   `default-bold`. Es una inconsistencia del diseño; el paso 4 tiene que decidir cómo tratarla.
-- [ ] **Paso 3. Ventana del plugin**: raíz fijada (clic para ubicar no debe cambiarla), lista solo
-  de nombres vagos con la sugerencia como placeholder, ⌖ para centrar la capa sin seleccionarla, y
-  los renombres enviados por **id** en el paquete (`figspec: 2`, `names.byId`); el extractor los
-  traduce a rutas (no se duplica la lógica de rutas en el plugin).
+- [x] **Paso 3. Ventana del plugin** (360×500, una vista: raíz · lista · pie).
+  Raíz fijada al abrir (otra selección muestra "Usar esta selección", también para capas internas);
+  campo para el nombre del componente con aviso si es genérico; lista solo de nombres vagos con la
+  sugerencia como placeholder (vacío = sugerencia), contexto (texto propio o vecino) y ⌖; enfocar
+  una fila centra la capa sin cambiar la selección; teclado (Enter/↑↓, Esc, ⌘↵). De cada componente
+  repetido se lista solo la primera instancia, y en un set, la variante por defecto (como el
+  extractor). Paquete `figspec: 2` con `names: { root, byId }`; el extractor los traduce a rutas
+  por id (prioridad: `--name` > `names.root`; nombre elegido > sugerencia), avisa de los sobrantes
+  y rechaza versiones más nuevas. Los nombres se recuerdan con `setPluginData` en cada capa.
+  _Verificado:_ plugin con `figma` simulado (documento real del menú y uno sintético), capturas de
+  la ventana en tema claro y oscuro, y `test/plugin.test.js`, que incluye la **paridad**: la
+  sugerencia del plugin es la clase que genera el extractor (las reglas están copiadas).
+  _Pendiente de verificar en Figma real:_ `setPluginData` en capas dentro de instancias (si falla,
+  ese nombre no se recuerda, pero sí se exporta), y que `scrollAndZoomIntoView` no altere la
+  selección. _Siguiente:_ nombrar los estados de los repetidos (`disabled2` → …) desde la ventana.
 - [x] **Paso 4. Extraer repetidos a un subcomponente (`--extract-repeated`, opcional).**
   Cada grupo repetido → subcomponente (nombre del diseñador si es común, si no `<Componente>Item`):
   texto que cambia → `label`, ícono → `icon` (componente del ícono, conserva sus clases), visibilidad
