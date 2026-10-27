@@ -165,6 +165,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fv-decisions li { display: block; padding: 1px 0; }
 .fv-decisions .fv-link { color: inherit; text-decoration: underline; }
 .fv-decisions .fv-hint { color: inherit; opacity: .85; font-size: 11px; margin: 0; }
+.fv-primary { background: var(--fv-accent); border-color: var(--fv-accent); color: #fff; font-weight: 600; }
+.fv-error-text { color: #dc2626; opacity: 1; }
 .fv-decisions code { word-break: break-all; }
 .fv-mark-figma { border: calc(1.5px / var(--fv-z, 1)) dashed #f97316; }
 .fv-dev { color: #f97316; font-size: 11px; }

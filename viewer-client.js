@@ -983,14 +983,47 @@ function boot(doc, data) {
 	const bundleFile = (meta.source && meta.source.bundle) || `figspec-${spec.kebab(design.component.figmaName) || "componente"}.json`;
 	// Sin la marca de copia del navegador ("figspec-x (1).json"): el extractor lo busca por el original
 	const fileName = bundleFile.replace(/ ?\(\d+\)(?=\.json$)/i, "").replace(/\.json$/i, "") + ".decisions.json";
-	function download() {
+	// Servido por serve.js (npm start): "Guardar nombres" los aplica sin descargar
+	const server = typeof window !== "undefined" && window.figspecServer && /^https?:$/.test(location.protocol) ? window.figspecServer : null;
+	function currentDoc() {
 		// Ruta y nombre en Figma de cada capa, para reconocerla aunque cambie el id (copias)
 		const paths = (data.geometry && data.geometry.paths) || {};
 		const figmaName = (id) => {
 			const l = layers.find((x) => { const t = renameTarget(x); return t && t.id === id; });
 			return l ? renameTarget(l).figma : undefined;
 		};
-		const doc = decisionsDoc(meta, pending, (id) => ({ figma: figmaName(id), path: paths[id] }));
+		return decisionsDoc(meta, pending, (id) => ({ figma: figmaName(id), path: paths[id] }));
+	}
+	let saving = false;
+	async function saveNames(button) {
+		if (!server) return download();
+		if (saving) return;
+		saving = true;
+		button.disabled = true;
+		button.textContent = "Guardando…";
+		try {
+			const res = await fetch("/api/decisions", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "X-Figspec-Token": server.token },
+				body: JSON.stringify(currentDoc()),
+			});
+			const out = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(out.error || `El servidor respondió ${res.status}`);
+			// Aplicados: ya no están pendientes; la página se recarga con la salida regenerada
+			pending = { byId: {} };
+			savePending();
+			location.reload();
+		} catch (e) {
+			saving = false;
+			button.disabled = false;
+			button.textContent = "Guardar nombres";
+			alertBox.textContent = `No se pudieron guardar: ${e.message}`;
+			alertBox.hidden = false;
+		}
+	}
+	const alertBox = h("p", { class: "fv-hint fv-error-text", role: "alert", hidden: true });
+	function download() {
+		const doc = currentDoc();
 		const blob = new Blob([JSON.stringify(doc, null, 2) + "\n"], { type: "application/json" });
 		const a = doc.createElement("a");
 		a.href = URL.createObjectURL(blob);
@@ -1014,13 +1047,18 @@ function boot(doc, data) {
 		}
 		const cmd = `node extractor.js ${bundleFile} --viewer`;
 		const copyBtn = h("button", { type: "button", class: "fv-link", text: "Copiar comando", onclick: () => copy(cmd, copyBtn) });
+		const saveBtn = h("button", { type: "button", class: "fv-primary", text: "Guardar nombres",
+			title: server ? "Los aplica y regenera la salida" : `Descarga ${fileName}`, onclick: () => saveNames(saveBtn) });
 		decisionsBox.replaceChildren(
-			h("h3", { text: `${n} nombre${n === 1 ? "" : "s"} cambiado${n === 1 ? "" : "s"}` }),
+			h("h3", { text: `${n} nombre${n === 1 ? "" : "s"} sin guardar` }),
 			h("ul", {}, rows.map((r) => h("li", {}, h("button", { type: "button", class: "fv-link", text: r.from, onclick: () => { const l = r.layer(); if (l) select(l); } }), " → ", h("code", { text: r.to })))),
 			h("div", { class: "fv-insp-tools" },
-				h("button", { type: "button", text: "Descargar decisiones", onclick: download }),
+				saveBtn,
 				h("button", { type: "button", text: "Descartar", onclick: () => { pending = { byId: {} }; savePending(); drawTree(); showDecisions(); showSelection(); } })),
-			h("p", { class: "fv-hint" }, `Guarda ${fileName} en tu carpeta de descargas (FIGMA_INBOX) o junto al paquete y vuelve a generar (npm start, o `, h("code", { text: cmd }), "): el extractor lo incorpora a las decisiones del proyecto. ", copyBtn),
+			alertBox,
+			server
+				? h("p", { class: "fv-hint", text: "Se aplican al momento: el extractor los guarda en las decisiones del proyecto y la vista se regenera." })
+				: h("p", { class: "fv-hint" }, `Se descarga ${fileName}: guárdalo en la carpeta de entrada (junto al paquete) y vuelve a generar (npm start, o `, h("code", { text: cmd }), "). Con npm start se guardan sin descargar. ", copyBtn),
 		);
 	}
 

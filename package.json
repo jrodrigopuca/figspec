@@ -4,10 +4,11 @@
   "description": "Exporta un componente de Figma con un plugin y lo convierte en component.json, CSS Modules y componentes React (TypeScript).",
   "bin": {
     "figspec": "extractor.js",
-    "figspec-viewer": "viewer.js"
+    "figspec-viewer": "viewer.js",
+    "figspec-serve": "serve.js"
   },
   "scripts": {
-    "start": "node extractor.js --open",
+    "start": "node serve.js",
     "extract": "node extractor.js",
     "viewer": "node viewer.js --open",
     "test": "node --test test/"
@@ -18,6 +19,7 @@
     "react.js",
     "spec.js",
     "viewer.js",
+    "serve.js",
     "viewer-client.js",
     "viewer.css",
     "plugin/"

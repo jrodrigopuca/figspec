@@ -166,8 +166,14 @@ carpeta aparte):
   lee; `viewer.js` acepta el componente o toma la salida más reciente. Validado con
   "Achievements" y el menú real: los 8 nombres que el paquete viejo del menú traía adentro se
   migraron solos al archivo del proyecto; una segunda corrida no lo reescribe; 6 pruebas) ·
-  3 visualizador: modo Nombres (sin Código, con estados), "Guardar nombres", estado
-  aplicados/sin guardar, servidor local · 4 `npm run react` (destino, al día, aviso de cambios en
+  3 visualizador: ~~3a servidor local + "Guardar nombres"~~ (hecho: `serve.js`, `npm start`:
+  corre el extractor con `--viewer`, sirve viewer.html en 127.0.0.1 con una clave por sesión
+  inyectada en la página; POST /api/decisions con la clave → el extractor combina los nombres en
+  `FIGMA_DECISIONS` (o los deja junto al paquete) y regenera; la página se recarga; Host
+  restringido a 127.0.0.1/localhost, cuerpo hasta 5 MB, puerto `FIGMA_PORT` (4870) o el
+  siguiente libre; el viewer.html suelto descarga. Validado con un clic real en Chrome sobre una
+  copia de "Achievements": el nombre del visualizador ganó al del plugin y la vista se
+  regeneró; 2 pruebas) · 3b modo Nombres (sin Código, estado aplicados/sin guardar) · 3c estados · 4 `npm run react` (destino, al día, aviso de cambios en
   clases y props) · 5 grupos repetidos.
   _Tema a revisar (usuario):_ agrupar los ítems de un grupo repetido. Opciones: una clase común
   (`.item`) si los estilos son idénticos; `.item` más un modificador por estado

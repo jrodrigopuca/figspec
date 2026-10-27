@@ -82,12 +82,12 @@ Esas tres carpetas ya vienen en el repositorio, cada una con un README que expli
 
 | Comando | Qué hace |
 |---|---|
-| `npm start` | Toma el último paquete exportado, genera la salida y el visualizador, y lo abre |
+| `npm start` | Toma el último paquete exportado, genera la salida y abre el visualizador servido en `http://127.0.0.1` (Ctrl+C para cerrar) |
 | `npm start -- achievements` | Lo mismo con `figspec-achievements.json` |
 | `npm run extract [-- componente]` | Solo genera la salida |
 | `npm run viewer [-- componente]` | Vuelve a generar el visualizador de ese componente (o del último generado) y lo abre |
 
-El ciclo queda: exportas con el plugin → `npm start` → revisas en el visualizador → si cambias nombres, "Descargar decisiones" → `npm start` otra vez.
+El ciclo queda: exportas con el plugin → `npm start` → revisas en el visualizador → si cambias nombres, **Guardar nombres**: se aplican al momento (el extractor los guarda en las decisiones del proyecto y la vista se recarga regenerada), sin descargar nada. El servidor solo escucha en tu máquina y exige una clave que va en la página.
 
 - **Decisiones del proyecto** (`FIGMA_DECISIONS`): un archivo por componente (`achievements.decisions.json`), relacionado por el id del componente que guarda adentro (si renombras el componente o el archivo, se sigue encontrando; una copia del componente se reconoce por su nombre y por las rutas de sus capas). En cada corrida el extractor le incorpora lo entrante —los nombres que elegiste en el plugin (en el mismo paquete) y lo que descargó el visualizador (`figspec-x.decisions.json`, junto al paquete o en `FIGMA_INBOX`)—, combinado por fecha, y lo actualiza solo si cambió (lo dice). Versiónalo con tu proyecto. `--decisions <archivo>` en el comando solo se lee; `--no-decisions` genera sin nombres de archivos.
 - El navegador no reemplaza un archivo que ya descargaste: guarda `figspec-x (1).json`. El extractor usa siempre la copia más reciente y lo dice.
@@ -213,8 +213,8 @@ El interruptor **Código** está apagado por defecto: así la vista sirve a quie
 
 Con **Código** prendido, el inspector tiene un campo **Nombre en código** para la capa elegida (o **Nombre del componente**, en la raíz) y muestra la clase que va a resultar. Los cambios se marcan con ✎ en el árbol y se juntan arriba del inspector; se guardan en el navegador, así no se pierden al recargar. Para aplicarlos:
 
-1. **Descargar decisiones** guarda `figspec-<nombre>.decisions.json` (mismo nombre que el paquete del plugin).
-2. Déjalo junto al paquete (el navegador suele descargar los dos en la misma carpeta) y vuelve a generar con `npm start` o `node extractor.js figspec-menu-mobile.json --viewer`: el extractor lo encuentra solo. Si está en otro lugar, `--decisions <archivo>`.
+- Con **`npm start`** (visualizador servido), **Guardar nombres** los aplica al momento: quedan en las decisiones del proyecto (`FIGMA_DECISIONS`) o, sin esa variable, junto al paquete, y la vista se recarga regenerada.
+- Con el **`viewer.html` suelto** (doble clic, el que le pasas a UX), **Guardar nombres** descarga `figspec-<nombre>.decisions.json` (mismo nombre que el paquete): déjalo en la carpeta de entrada (junto al paquete, o en `FIGMA_INBOX`) y vuelve a generar; el extractor lo incorpora solo. Si está en otro lugar, `--decisions <archivo>`.
 
 Cada nombre del archivo se relaciona con su capa por el id de Figma y, si ese id no está (por ejemplo, al exportar una copia del componente), por su **ruta**: los nombres de las capas desde la raíz y su posición entre hermanos del mismo nombre. El extractor avisa qué aplicó por ruta y qué no encontró; lo que no encuentra capa no se aplica pero se conserva. Cada nombre lleva su **fecha**: si una capa tiene nombres en varios archivos (el del plugin, el de decisiones), gana el más reciente; `--name` gana sobre todo.
 

@@ -106,6 +106,8 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--decisions") opts.decisions = argv[++i];
 	else if (a === "--no-decisions") (opts.decisions = null), (opts.projectDecisions = null), (opts.findDecisions = false);
 	else if (a === "--open") opts.open = true;
+	// Para serve.js: escribe en ese archivo dónde quedó la salida y dónde están las decisiones
+	else if (a === "--report") opts.report = argv[++i];
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
@@ -380,6 +382,8 @@ function main() {
 		);
 	writeManifest(outDir);
 	saveProjectDecisions();
+	if (opts.report)
+		fs.writeFileSync(opts.report, JSON.stringify({ outDir: path.resolve(outDir), bundle: path.resolve(opts.from), projectDecisions: opts.projectFile ? path.resolve(opts.projectFile) : null }));
 
 	console.error(`✔ ${outDir}/`);
 	if (opts.open) openFile(path.resolve(outDir, "viewer.html"));
