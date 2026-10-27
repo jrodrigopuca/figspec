@@ -71,11 +71,12 @@ Prioridad: parámetro > variable de entorno > `.env` > valor por defecto. Ver `.
 Para ir de Figma al visualizador sin escribir rutas, indica una vez en un `.env` (copia de `.env.example`) **carpetas**, así sirve para varios componentes:
 
 ```sh
-FIGMA_FROM=figma-inbox            # donde guardas lo que exporta el plugin
-FIGMA_INBOX=figma-inbox           # donde guardas lo que descarga el visualizador (puede ser la misma)
+FIGMA_FROM=figma-inbox            # entrada: lo que exporta el plugin y lo que descarga el visualizador
 FIGMA_OUT_DIR=figma-work          # salidas de trabajo: una subcarpeta por componente
 FIGMA_DECISIONS=figma-decisions   # decisiones: una por componente
 ```
+
+`FIGMA_INBOX` solo hace falta si el visualizador descarga en otra carpeta (por ejemplo `FIGMA_INBOX=~/Downloads`): los nombres y las decisiones se buscan junto al paquete y, además, ahí.
 
 Esas tres carpetas ya vienen en el repositorio, cada una con un README que explica qué va adentro; su contenido no se versiona (son diseños privados). En tu proyecto puedes usar otras rutas; ahí sí conviene versionar las decisiones.
 
