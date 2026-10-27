@@ -8,8 +8,6 @@ figma-*/
 
 # Paquetes exportados con el plugin (pueden incluir diseños privados)
 figspec-*.json
-# Caché de la versión anterior basada en la API REST
-.figspec-cache/
 
 node_modules/
 .DS_Store
