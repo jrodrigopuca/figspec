@@ -14,6 +14,37 @@ pasan a estar activados por defecto, y la limpieza de la salida anterior (manifi
 Los ítems 11 y 12 quedan **retirados**; el código sigue en la historia de git (el último commit
 con la API es `0e71a12`) por si hiciera falta recuperarlo.
 
+## En mira
+
+Resumen de lo pendiente (el detalle está en cada ítem más abajo).
+
+**Verificar en Figma real** (funciona con `figma` simulado; falta un diseño que lo tenga):
+- [ ] Variables con nombre (colores o medidas enlazados a variables → tokens con su nombre).
+- [ ] Elementos rotados (el plugin agrega `size`/`relativeTransform`).
+- [ ] `setPluginData` en capas dentro de instancias (si falla, ese nombre no se recuerda).
+- [ ] Ubicar con ⌖ sin que cambie la selección.
+- [x] Imágenes de relleno: `imageRef` ↔ `getImageByHash` coinciden (pantalla de login real, JPEG
+  1920×1080 → `.jpg` detectado por contenido, `<img>` en el componente, captura igual a Figma).
+
+**Funcionalidad**
+- [ ] `aria-current` / `aria-disabled` en los ítems extraídos, deducidos del nombre del estado
+  (`active`/`current` → `aria-current`, `disabled…` → `aria-disabled`).
+- [ ] `items.map(...)` con un array de datos en lugar de instancias explícitas.
+- [ ] Extraer repetidos en componentes con variantes (hoy solo se reportan).
+
+**Límites conocidos**
+- [ ] `id` internos de un SVG (clipPath, mask) repetidos si el ícono aparece varias veces.
+- [ ] Props de tipo swap: solo se pasan si el componente referido también se generó, y muestran el
+  nombre de Figma sin sufijo si tiene un homónimo.
+- [ ] Capas de texto con datos de ejemplo ("Juan Pérez") conservan ese nombre de clase cuando no se
+  extraen los repetidos.
+- [ ] Variantes con capas homónimas reordenadas: se emparejan por posición.
+- [ ] Rotaciones: dentro de auto layout la caja rotada no reserva espacio en CSS; hijos absolutos de
+  un padre rotado pueden quedar desplazados; las capas espejadas no se reflejan (hay notas).
+- [ ] Textos centrados verticalmente con partes de estilo distinto se dejan arriba (hay nota).
+- [ ] Grosor del texto: Chrome en macOS dibuja más grueso que Figma; se compensa en el proyecto con
+  `-webkit-font-smoothing: antialiased` (documentado en el README, no es del componente).
+
 ## P1
 
 - [x] **1. Íconos distintos colapsan en el mismo SVG.**
@@ -262,6 +293,11 @@ con la API es `0e71a12`) por si hiciera falta recuperarlo.
 - [x] Textos con saltos de línea se mostraban en una línea: ahora `white-space: pre-line` (o `pre`
   si el texto no se ajusta al ancho), y el separador U+2028 de Figma se normaliza a `\n`.
   Pruebas en `test/output.test.js`.
+- [x] **(P2) Textos en caja de alto fijo perdían su alto y su alineación vertical.**
+  Detectado con la pantalla de login real: "BackOffice" (caja de 412×146, centrado vertical) salía
+  ~55px más arriba. Ahora los textos sin auto alto conservan su altura (también en flex/grid, donde
+  además ocupan su espacio) y el centrado o la alineación inferior se aplican con flex en columna.
+  Con partes de estilo distinto se dejan arriba con una nota. Captura del login igual a la de Figma.
 - [x] **(P2)** (Consecuencia de #1) Los íconos que no son instancias se deduplicaban por `node.id`:
   el mismo dibujo repetido generaba varios archivos (prueba real: `icon-2`, `icon-3`, `icon-5` e
   `icon-6` idénticos).
