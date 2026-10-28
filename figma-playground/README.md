@@ -11,7 +11,8 @@ npm --prefix figma-playground run check  # tipos (strict) + build de Vite de tod
 ```
 
 - `src/components/`: destino de `npm run react`, una carpeta por componente. No se versiona (son tus diseños).
-- `src/global.css`: lo que los componentes asumen del proyecto (`box-sizing: border-box`, suavizado de texto como Figma). Las fuentes no se cargan: instálalas o agrégalas aquí.
-- `src/App.tsx`: encuentra los componentes solo (`import.meta.glob`) y carga cada `tokens.css` de forma global; si uno falla, los demás se siguen viendo.
+- `src/global.css`: lo que los componentes asumen del proyecto (`box-sizing: border-box`, suavizado de texto como Figma). Las fuentes no se cargan: instálalas o agrégalas aquí. figspec respeta la fuente de Figma (sin una genérica de respaldo); si falta en el equipo, la página lo avisa sobre el componente.
+- `src/App.tsx`: encuentra los componentes solo (`import.meta.glob`) y carga cada `tokens.css` de forma global; si un componente falla, los demás se siguen viendo.
+- `src/fonts.ts`: detecta las fuentes de cada componente que no están en el equipo (la misma comprobación que el visualizador).
 
 Es independiente del paquete de figspec (que no tiene dependencias): no se publica, y sus dependencias solo se instalan si lo usas.

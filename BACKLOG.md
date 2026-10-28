@@ -289,10 +289,10 @@ carpeta aparte):
   - _Prueba pendiente:_ la paridad con React se comprobó con un arnés fuera del repo (esbuild +
     react-dom); repetirla cuando cambie `react.js` o `renderTree`, o decidir si se suma como prueba
     opcional que se salta sin React instalado.
-  - _Decisión pendiente (encontrada en el paso 4):_ el CSS nombra la fuente sin una genérica de
-    respaldo (`font-family: "Geist";`): si no está instalada, el navegador usa la suya (serif), en
-    el visualizador y en el proyecto. Opciones: agregar `sans-serif` (o `serif`/`monospace` según
-    una lista de fuentes conocidas) o dejarlo así. Por defecto: sin cambios; el visualizador avisa.
+  - [x] _Decidido (2026-10-28, usuario):_ se respeta la fuente de Figma, sin agregar una genérica
+    de respaldo (`font-family: "Geist";`). Solo se avisa cuando no está instalada en el equipo: el
+    visualizador y la página de `figma-playground/` (misma comprobación por ancho en canvas, que
+    también reconoce las cargadas con `@font-face`).
   - [x] Ir de una herramienta a otra con npm y `.env` (2026-10-27, pedido del usuario): `env.js`
     compartido (carga del .env, `~`, copias del navegador, abrir archivos); scripts `npm start`
     (extractor + visualizador + abrir), `npm run extract`, `npm run viewer`; `viewer.js` usa
@@ -342,6 +342,42 @@ carpeta aparte):
 - [ ] Textos centrados verticalmente con partes de estilo distinto se dejan arriba (hay nota).
 - [ ] Grosor del texto: Chrome en macOS dibuja más grueso que Figma; se compensa en el proyecto con
   `-webkit-font-smoothing: antialiased` (documentado en el README, no es del componente).
+
+**Documentación y salud del código** (2026-10-28: README reescrito con guías en `docs/`,
+`CONTRIBUTING.md`, `docs/arquitectura.md`, `docs/formatos.md` y ADRs en `docs/decisiones/`; lo
+siguiente lo encontraron senior-dev y architect al escribirlos):
+- [ ] Pruebas: un único `CLEAN` compartido que vacíe todas las `FIGMA_*`. Hoy varias suites no
+  vacían `FIGMA_INBOX`, `FIGMA_CSS`, `FIGMA_SHALLOW`, `FIGMA_PNG` ni `FIGMA_ASSETS`: con un `.env`
+  que las defina, `npm test` puede fallar o leer datos reales.
+- [ ] `printHelp()` del extractor desactualizado: presenta `.names.json` como la vía del plugin y no
+  lista `FIGMA_INBOX`, `--no-extract-repeated` ni `--json`.
+- [ ] `.env.example` sin `FIGMA_PORT`.
+- [ ] `figma-inbox/README.md`: dice "Descargar decisiones" (el botón es "Guardar nombres") y
+  recomienda `FIGMA_INBOX=figma-inbox`, redundante con `FIGMA_FROM`.
+- [ ] Comentario de `extractor.js:readDecisions`: dice que las decisiones se leen después de los
+  nombres del plugin, pero `main()` lee el archivo del proyecto antes que los `.names.json` sueltos
+  (solo importa con fechas iguales). Corregir el comentario o el orden.
+- [ ] Investigar: en un set con variantes, un único ítem extraído con fondo distinto sale como estado
+  `default2` en vez de `active` (caso sintético: State=Default/Hover, tres ítems, uno con fondo
+  negro). Si se confirma, rompe la paridad con el plugin.
+- [ ] Prueba: ningún `.js` del paquete requiere algo fuera de los módulos de Node o de `./` (ADR 0006).
+- [ ] Pruebas de `serve.js`: `Host` distinto de 127.0.0.1/localhost → 403; cuerpo de más de 5 MB
+  rechazado.
+- [ ] Prueba: un archivo de decisiones con `version: 3` falla con un mensaje claro.
+- [ ] `react.js:generateReact` debería revisar `meta.format` y `viewer-client.js` el `format` de
+  `figma-geometry.json` antes de usarlos.
+- [ ] Separar `extractor.js:main()` para que no corra al hacer `require` (hoy ~3200 líneas con estado
+  global que solo se prueban como proceso hijo). Además, un índice de secciones como comentario al
+  inicio del archivo, en vez de otro documento.
+- [ ] Paridad React ↔ visualizador: decidir si pasa a ser una prueba opcional (se salta sin React) o
+  un paso del `check` de `figma-playground/`. Hoy un cambio en `react.js` puede romper la
+  compilación sin que falle ninguna prueba.
+- [ ] Verificar en Figma qué permite a un plugin sin `networkAccess` en el manifiesto (Figma rechazó
+  `["none"]`) y anotarlo en el ADR 0009.
+- [ ] Fechas de las decisiones de relojes distintos (Figma, navegador): un reloj desfasado puede
+  hacer ganar el nombre equivocado sin que se note. Evaluar si vale la pena avisarlo.
+- [ ] Una página de problemas frecuentes (fuente que falta, nombre en otra capa, "paquete más
+  nuevo") cuando haya casos reales. Opcional: un `AGENTS.md` que apunte a las invariantes y a los ADRs.
 
 ## P1
 
