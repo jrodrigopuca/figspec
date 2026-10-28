@@ -130,12 +130,12 @@ Los nombres que eliges (en el plugin o en el visualizador) no se guardan en Figm
 
 **De dónde salen.** En cada corrida el extractor junta:
 
-1. Las **decisiones del proyecto** (`FIGMA_DECISIONS`): un archivo por componente (`achievements.decisions.json`), relacionado por el id del componente que guarda adentro. Si renombras el componente o el archivo, se sigue encontrando; una copia del componente se reconoce por su nombre y por las rutas de sus capas.
-2. Los nombres elegidos en el **plugin**, dentro del mismo paquete (sección `decisions`). Versiones anteriores del plugin los guardaban en la sección `names` del paquete o aparte, en `figspec-<nombre>.names.json` junto al paquete (o en `FIGMA_INBOX`); se siguen leyendo.
+1. Los nombres elegidos en el **plugin**, dentro del mismo paquete (sección `decisions`). Versiones anteriores del plugin los guardaban en la sección `names` del paquete o aparte, en `figspec-<nombre>.names.json` junto al paquete (o en `FIGMA_INBOX`); se siguen leyendo.
+2. Las **decisiones del proyecto** (`FIGMA_DECISIONS`): un archivo por componente (`achievements.decisions.json`), relacionado por el id del componente que guarda adentro. Si renombras el componente o el archivo, se sigue encontrando; una copia del componente se reconoce por su nombre y por las rutas de sus capas.
 3. Lo que descargó el **visualizador suelto** (`figspec-<nombre>.decisions.json`), junto al paquete o en `FIGMA_INBOX`.
 4. Un archivo indicado con `--decisions <archivo>`.
 
-**Cómo se combinan.** Cada nombre lleva su **fecha**: si una capa tiene nombres en varios archivos, gana el más reciente. `--name` gana sobre todo. Con `FIGMA_DECISIONS`, el resultado se guarda en el archivo del proyecto, solo si cambió (el extractor lo dice). Versiónalo con tu proyecto.
+**Cómo se combinan.** Cada nombre lleva su **fecha**: si una capa tiene nombres en varios archivos, gana el más reciente; a igual fecha, el que está más abajo en esta lista. `--name` gana sobre todo. Con `FIGMA_DECISIONS`, el resultado se guarda en el archivo del proyecto, solo si cambió (el extractor lo dice). Versiónalo con tu proyecto.
 
 **Cómo encuentra la capa.** Cada nombre se relaciona con su capa por el id de Figma y, si ese id no está (por ejemplo, al exportar una copia del componente), por su **ruta**: los nombres de las capas desde la raíz y su posición entre hermanos del mismo nombre. El extractor avisa qué aplicó por ruta y qué no encontró; lo que no encuentra capa no se aplica pero se conserva.
 

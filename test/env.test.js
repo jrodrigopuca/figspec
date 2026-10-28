@@ -209,6 +209,20 @@ test("--decisions en el comando solo se lee: no se modifica", () => {
 	assert.equal(fs.readFileSync(dec, "utf8"), before);
 });
 
+test("a igual fecha, las decisiones del proyecto ganan a un .names.json suelto (plugin)", () => {
+	const dir = tmp();
+	const bundle = cardNamed("Card", "Benefits");
+	const at = "2026-10-27T10:00:00.000Z";
+	write(path.join(dir, "figspec-card.json"), bundle);
+	write(path.join(dir, "figspec-card.names.json"), names(bundle, "delPlugin", at));
+	const project = path.join(dir, "decisions");
+	fs.mkdirSync(project);
+	write(path.join(project, "card.decisions.json"), { ...names(bundle, "delProyecto", at), origin: "viewer" });
+	const r = run("extractor.js", [path.join(dir, "figspec-card.json"), "--out-dir", path.join(dir, "out")], { FIGMA_DECISIONS: project });
+	assert.equal(r.status, 0, r.stderr);
+	assert.equal(spec(path.join(dir, "out")).component.structure.children[0].className, "delProyecto");
+});
+
 test("viewer.js con FIGMA_OUT_DIR: el componente nombrado o la salida más reciente", () => {
 	const dir = tmp();
 	write(path.join(dir, "figspec-card.json"), card("A"), 20);

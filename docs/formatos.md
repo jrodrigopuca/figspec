@@ -145,8 +145,10 @@ Reglas (`extractor.js:decisionEntries`, `resolveDecisions`):
 - `--name` gana sobre todo (incluido `root`).
 
 Orden en que se leen las fuentes (`extractor.js:main`; importa solo a igual fecha): sección
-`decisions` del paquete → `names` heredado del paquete → archivo del proyecto → `.names.json`
-sueltos → `.decisions.json` descargados → `--decisions`.
+`decisions` del paquete → `names` heredado del paquete → `.names.json` sueltos → archivo del
+proyecto → `.decisions.json` descargados → `--decisions`. Todo lo del plugin va antes que las
+decisiones: a igual fecha, gana lo decidido después (prueba "a igual fecha, las decisiones del
+proyecto ganan…" en `test/env.test.js`).
 
 `env.js:decisionsIn` busca el archivo del proyecto por `component.id` (aunque el archivo se llame
 distinto) y, si no lo encuentra, usa `<componente>.decisions.json`. `saveProjectDecisions` lo

@@ -244,6 +244,8 @@ function main() {
 			`↺ Paquete del plugin: "${data.name}", exportado el ${new Date(data.exportedAt).toLocaleString()}.`,
 		);
 	}
+	// Lo del plugin se lee antes que las decisiones: a igual fecha, gana lo decidido después
+	for (const f of opts.nameFiles || []) decisionSources.push(readDecisions(f, "plugin"));
 	// Decisiones del proyecto (FIGMA_DECISIONS): el archivo, o el del componente en la carpeta
 	if (opts.projectDecisions) {
 		opts.projectFile = isDir(opts.projectDecisions) || !/\.json$/i.test(opts.projectDecisions)
@@ -254,7 +256,6 @@ function main() {
 			console.error(`↺ Decisiones del proyecto: ${opts.projectFile}`);
 		}
 	}
-	for (const f of opts.nameFiles || []) decisionSources.push(readDecisions(f, "plugin"));
 	for (const f of opts.incoming || [])
 		if (!opts.projectFile || path.resolve(f) !== path.resolve(opts.projectFile)) {
 			decisionSources.push(readDecisions(f, "decisions"));
@@ -393,9 +394,9 @@ function main() {
 }
 
 // ---------------------------------------------------------------- decisiones
-// Nombres que no vienen de Figma: los elegidos en la ventana del plugin (se exportan aparte,
-// <paquete>.names.json) y los decididos en el visualizador (archivo de decisiones). Mismo formato,
-// "figspec": "decisions":
+// Nombres que no vienen de Figma: los elegidos en la ventana del plugin (sección "decisions" del
+// paquete; antes, <paquete>.names.json aparte o "names" dentro del paquete) y los decididos en el
+// visualizador (archivo de decisiones). Mismo formato, "figspec": "decisions":
 //   v2: { "version": 2, "component": { "id", "figma" }, "root": { "name", "at" },
 //         "layers": [{ "id", "figma", "path", "name", "at" }], "states": [ …igual ], "groups": [] }
 //   v1 (se sigue leyendo): { "version": 1, "component": "<id>", "names": { "root", "byId", "states" } }
@@ -403,7 +404,8 @@ function main() {
 // componente), por la ruta: pares [nombre en Figma, n] desde la raíz (en un set, desde la variante
 // por defecto), con n = posición entre hermanos del mismo nombre, contando las ocultas; entra en
 // las instancias. Se combinan por fecha ("at"): en cada capa gana el más reciente; a igual fecha,
-// el archivo que se lee después (decisiones después que los del plugin). name: null quita un
+// el que se lee después. Orden: lo del plugin (paquete, .names.json), las decisiones del proyecto,
+// las descargadas junto al paquete o en FIGMA_INBOX y --decisions. name: null quita un
 // nombre (registrado, para que un archivo viejo no lo reponga). Lo que no encuentra capa se
 // informa y se conserva en meta.decisions. --name gana sobre todo.
 const DECISIONS_VERSION = 2;
@@ -3136,24 +3138,38 @@ function px(n) {
 }
 
 function printHelp() {
-	console.log(`Uso: node extractor.js figspec-<nombre>.json [--name Nombre] [--react] [--viewer] [--out-dir dir] [--no-assets] [--no-png] [--shallow] [--no-css]
+	console.log(`Uso: node extractor.js [figspec-<nombre>.json | <nombre>] [opciones]
 
-El archivo se genera en Figma con el plugin "figspec export" (carpeta plugin/).
-También acepta una respuesta guardada de /v1/files/:key/nodes (sin íconos ni imágenes).
+El paquete se genera en Figma con el plugin "figspec export" (carpeta plugin/) y trae también los
+nombres elegidos en su ventana. También acepta una respuesta guardada de /v1/files/:key/nodes (sin
+íconos ni imágenes). Si FIGMA_FROM es una carpeta, <nombre> elige figspec-<nombre>.json en ella;
+sin nombre, el último exportado.
 
-Variables (.env o entorno): FIGMA_FROM (archivo de entrada), FIGMA_NAME, FIGMA_OUT_DIR,
-  FIGMA_ASSETS, FIGMA_PNG, FIGMA_SHALLOW, FIGMA_CSS, FIGMA_REACT, FIGMA_VIEWER, FIGMA_EXTRACT_REPEATED (true/false), FIGMA_DECISIONS.
---react genera además componentes React en TypeScript (.tsx), uno por componente.
---viewer genera además viewer.html: el componente junto a la vista previa de Figma (un solo archivo).
---decisions <archivo> aplica los nombres decididos en el visualizador; sin la opción, se usa
-  figspec-<nombre>.decisions.json si está junto al paquete. Los nombres elegidos en el plugin
-  (figspec-<nombre>.names.json, junto al paquete) se aplican antes. --no-decisions no usa ninguno.
---open genera el visualizador y lo abre en el navegador.
-Las rutas aceptan ~ (carpeta personal). Si FIGMA_FROM viene del .env y el navegador guardó copias
-  ("figspec-x (1).json"), se usa la más reciente.
---extract-repeated convierte los grupos repetidos (3+ hermanos iguales) en un subcomponente con props y estados.
-Los parámetros anulan al .env; --assets, --png, --no-shallow y --css activan/desactivan lo definido allí.
-Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).`);
+Opciones (anulan al .env):
+  --from <archivo> (o --json)     paquete de entrada (FIGMA_FROM)
+  --name <Nombre>                 nombre del componente en código (FIGMA_NAME)
+  --out-dir <carpeta>             salida, tal cual (FIGMA_OUT_DIR es la carpeta base: una subcarpeta por
+                                  componente); sin ninguno, figma-<componente>/
+  --react / --no-react            componentes React en TypeScript (FIGMA_REACT)
+  --viewer / --no-viewer          viewer.html: el componente junto a la vista previa de Figma (FIGMA_VIEWER)
+  --open                          genera el visualizador y lo abre en el navegador
+  --extract-repeated / --no-extract-repeated
+                                  grupos repetidos (3+ hermanos iguales) como subcomponente con props y estados
+                                  (FIGMA_EXTRACT_REPEATED)
+  --assets / --no-assets          íconos e imágenes (FIGMA_ASSETS)
+  --png / --no-png                preview.png (FIGMA_PNG)
+  --shallow / --no-shallow        sin describir subcomponentes (FIGMA_SHALLOW)
+  --css / --no-css                CSS Modules; sin ellos, solo component.json (FIGMA_CSS)
+  --decisions <archivo>           suma esos nombres (solo se lee); con FIGMA_DECISIONS se guardan allí
+  --no-decisions                  no aplica nombres de ningún archivo (sí --name)
+
+Nombres: se combinan los del paquete (y .names.json de paquetes viejos), las decisiones del
+  proyecto (FIGMA_DECISIONS: archivo o carpeta con <componente>.decisions.json), lo que descargó el
+  visualizador junto al paquete o en FIGMA_INBOX, y --decisions. En cada capa gana el más reciente.
+Las rutas aceptan ~ (carpeta personal). Si el navegador guardó copias ("figspec-x (1).json"), se
+  usa la más reciente.
+Cada ejecución reemplaza la salida anterior (solo los archivos que generó el extractor).
+Todas las variables y parámetros: docs/configuracion.md.`);
 }
 
 function fail(msg) {

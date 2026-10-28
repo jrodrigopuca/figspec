@@ -349,14 +349,16 @@ siguiente lo encontraron senior-dev y architect al escribirlos):
 - [ ] Pruebas: un único `CLEAN` compartido que vacíe todas las `FIGMA_*`. Hoy varias suites no
   vacían `FIGMA_INBOX`, `FIGMA_CSS`, `FIGMA_SHALLOW`, `FIGMA_PNG` ni `FIGMA_ASSETS`: con un `.env`
   que las defina, `npm test` puede fallar o leer datos reales.
-- [ ] `printHelp()` del extractor desactualizado: presenta `.names.json` como la vía del plugin y no
-  lista `FIGMA_INBOX`, `--no-extract-repeated` ni `--json`.
-- [ ] `.env.example` sin `FIGMA_PORT`.
-- [ ] `figma-inbox/README.md`: dice "Descargar decisiones" (el botón es "Guardar nombres") y
-  recomienda `FIGMA_INBOX=figma-inbox`, redundante con `FIGMA_FROM`.
-- [ ] Comentario de `extractor.js:readDecisions`: dice que las decisiones se leen después de los
+- [x] `printHelp()` del extractor desactualizado: reescrito con todas las opciones, el orden de los
+  nombres y el enlace a `docs/configuracion.md`.
+- [x] `.env.example` sin `FIGMA_PORT`: agregado.
+- [x] `figma-inbox/README.md`: dice "Descargar decisiones" (el botón es "Guardar nombres") y
+  recomienda `FIGMA_INBOX=figma-inbox`, redundante con `FIGMA_FROM`. Corregido.
+- [x] Comentario de `extractor.js:readDecisions`: dice que las decisiones se leen después de los
   nombres del plugin, pero `main()` lee el archivo del proyecto antes que los `.names.json` sueltos
-  (solo importa con fechas iguales). Corregir el comentario o el orden.
+  (solo importa con fechas iguales). Corregido el orden (2026-10-28): lo del plugin, incluidos los
+  `.names.json`, se lee antes que las decisiones, como decía el comentario; con prueba en
+  `test/env.test.js`.
 - [ ] Investigar: en un set con variantes, un único ítem extraído con fondo distinto sale como estado
   `default2` en vez de `active` (caso sintético: State=Default/Hover, tres ítems, uno con fondo
   negro). Si se confirma, rompe la paridad con el plugin.
