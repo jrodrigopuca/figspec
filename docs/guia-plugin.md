@@ -1,6 +1,6 @@
 # El plugin de Figma
 
-El plugin **figspec export** (carpeta `plugin/`) toma una foto del componente seleccionado y la descarga en un solo archivo, `figspec-<nombre>.json` (el "paquete"). Todo lo demás —el extractor, el visualizador, `npm run react`— trabaja sobre ese archivo, sin volver a Figma.
+El plugin **figspec export** (carpeta `plugin/`) toma una foto del componente seleccionado y la descarga en un solo archivo, `figspec-<nombre>.json` (el "paquete"). Todo lo demás —`figspec view`, `figspec react`, `figspec build`— trabaja sobre ese archivo, sin volver a Figma.
 
 ## Instalarlo
 
@@ -20,7 +20,7 @@ Selecciona el componente y ejecuta **figspec export**. La ventana queda fijada e
 
 Teclado: Enter / ↑ ↓ para moverte entre los campos, Esc vuelve a la sugerencia, ⌘↵ exporta.
 
-Pulsa **Exportar**: se descarga `figspec-<nombre>.json`. Guárdalo en la carpeta de entrada (`figma-inbox/`, o la que indique `FIGMA_FROM`). Si la descarga no funciona, usa **Copiar JSON** y pégalo en un archivo con ese nombre.
+Pulsa **Exportar**: se descarga `figspec-<nombre>.json`. Guárdalo donde prefieras: después se lo pasas a `figspec` con `-s`. Si la descarga no funciona, usa **Copiar JSON** y pégalo en un archivo con ese nombre.
 
 Si descargas dos veces el mismo componente, el navegador guarda `figspec-x (1).json`: el extractor usa siempre la copia más reciente y lo dice.
 

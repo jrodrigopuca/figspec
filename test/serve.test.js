@@ -1,5 +1,5 @@
 "use strict";
-// Servidor local del visualizador (serve.js, npm start): sirve viewer.html con su clave y "Guardar
+// Servidor local del visualizador (serve.js, figspec view): sirve viewer.html con su clave y "Guardar
 // nombres" aplica los nombres (decisiones del proyecto o junto al paquete) y regenera la salida.
 // Uso: node --test   (sin dependencias)
 
@@ -11,7 +11,6 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 
 const ROOT = path.join(__dirname, "..");
-const CLEAN = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_INBOX: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "", FIGMA_PORT: "" };
 
 let seq = 0;
 const T = (s) => ({ id: `${++seq}:1`, name: s, type: "TEXT", characters: s, style: { fontSize: 12 }, absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 } });
@@ -22,9 +21,9 @@ function bundle() {
 }
 
 // Arranca serve.js y espera la URL; devuelve { url, stop, log }
-function start(args, vars) {
+function start(args) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [path.join(ROOT, "src", "serve.js"), ...args, "--port", "0", "--no-open"], { env: { ...CLEAN, ...vars } });
+		const child = spawn(process.execPath, [path.join(ROOT, "src", "serve.js"), ...args, "--port", "0", "--no-open"]);
 		let log = "";
 		const timer = setTimeout(() => reject(new Error(`serve.js no arrancó:\n${log}`)), 15000);
 		child.stderr.on("data", (d) => {
@@ -53,8 +52,9 @@ test("servidor: sirve el visualizador con su clave y \"Guardar nombres\" actuali
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-serve-"));
 	const b = bundle();
 	fs.writeFileSync(path.join(dir, "figspec-card.json"), JSON.stringify(b.data));
-	const vars = { FIGMA_FROM: dir, FIGMA_OUT_DIR: path.join(dir, "out"), FIGMA_DECISIONS: path.join(dir, "decisions") };
-	const s = await start([], vars);
+	const project = path.join(dir, "decisions", "card.decisions.json");
+	const out = path.join(dir, "out");
+	const s = await start(["-s", path.join(dir, "figspec-card.json"), "-o", out, "-d", project]);
 	try {
 		const html = await (await fetch(s.url)).text();
 		const token = html.match(/window\.figspecServer = \{"token":"([0-9a-f]+)"\}/)[1];
@@ -62,13 +62,12 @@ test("servidor: sirve el visualizador con su clave y \"Guardar nombres\" actuali
 
 		const denied = await post(s.url, decisions(b, "fila"), "otra");
 		assert.equal(denied.status, 403, "sin la clave no escribe");
-		assert.ok(!fs.existsSync(path.join(dir, "decisions", "card.decisions.json")));
+		assert.ok(!fs.existsSync(project));
 
 		const res = await post(s.url, decisions(b, "fila"), token);
 		assert.equal(res.status, 200, await res.clone().text());
-		const project = JSON.parse(fs.readFileSync(path.join(dir, "decisions", "card.decisions.json"), "utf8"));
-		assert.deepEqual(project.layers.map((x) => x.name), ["fila"]);
-		assert.equal(className(path.join(dir, "out", "card")), "fila", "la salida se regeneró");
+		assert.deepEqual(JSON.parse(fs.readFileSync(project, "utf8")).layers.map((x) => x.name), ["fila"]);
+		assert.equal(className(out), "fila", "la salida se regeneró");
 		assert.match(await (await fetch(s.url)).text(), /fila/, "el visualizador servido es el nuevo");
 	} finally {
 		s.stop();
@@ -80,7 +79,7 @@ test("servidor: sin decisiones del proyecto, los nombres quedan junto al paquete
 	const b = bundle();
 	fs.writeFileSync(path.join(dir, "figspec-card.json"), JSON.stringify(b.data));
 	const out = path.join(dir, "out");
-	const s = await start([path.join(dir, "figspec-card.json"), "--out-dir", out], {});
+	const s = await start([path.join(dir, "figspec-card.json"), "--out-dir", out]);
 	try {
 		const token = (await (await fetch(s.url)).text()).match(/"token":"([0-9a-f]+)"/)[1];
 		assert.equal((await post(s.url, decisions(b, "fila"), token)).status, 200);

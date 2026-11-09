@@ -1,6 +1,6 @@
 // figspec export — exporta un componente en el formato de la API REST de Figma (JSON_REST_V1)
 // junto con íconos (SVG), imágenes, vista previa y nombres de variables: la foto de Figma, que el
-// extractor lee con `node extractor.js <archivo>`. Los nombres que el usuario elige para las capas
+// comando lee con `figspec view -s <archivo>`. Los nombres que el usuario elige para las capas
 // con nombre vago ("Frame 5") van en el mismo archivo pero en su propia sección, "decisions"
 // (formato de decisiones), solo si hay alguno: una sola descarga.
 // Corre dentro de Figma: no usa la API REST ni consume su cuota.

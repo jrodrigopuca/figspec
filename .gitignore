@@ -1,13 +1,10 @@
-# Configuración local
+# figspec ya no lee ningún .env; se sigue ignorando por si queda uno de antes
 .env
 .env.*
-!.env.example
 
-# Carpetas de trabajo (figma-inbox, figma-work, figma-decisions) y salidas por defecto
-# (figma-<componente>/): su contenido es privado (diseños y nombres). Solo se versiona el README
-# de cada una, para que las carpetas existan al clonar.
+# Salidas por defecto de figspec build (figma-<componente>/) y carpetas de trabajo de versiones
+# anteriores (figma-inbox, figma-work, figma-decisions): su contenido es privado (diseños y nombres)
 figma-*/*
-!figma-*/README.md
 
 # figma-playground es un proyecto (se versiona), salvo los componentes entregados y su build
 !figma-playground/*

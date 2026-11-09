@@ -2,7 +2,7 @@ import { Component, useEffect, useState, type ComponentType, type ReactNode } fr
 import { missingFonts } from "./fonts";
 import "./App.css";
 
-// Cada carpeta que deja npm run react (src/components/<Componente>/) exporta su componente desde
+// Cada carpeta que deja figspec react (src/components/<Componente>/) exporta su componente desde
 // index.ts; sus tokens.css se cargan de forma global, como en un proyecto real
 const modules = import.meta.glob<Record<string, unknown>>("./components/*/index.ts", { eager: true });
 import.meta.glob("./components/*/tokens.css", { eager: true });
@@ -35,13 +35,13 @@ export function App() {
         <h1>Componentes</h1>
         <p>
           Cada uno con los valores por defecto de Figma. Se actualizan solos al entregar con{" "}
-          <code>npm run react</code>.
+          <code>figspec react</code>.
         </p>
       </header>
       {delivered.length === 0 ? (
         <p className="pg-empty">
-          Todavía no hay componentes. Desde la raíz de figspec: <code>npm run react -- &lt;componente&gt;</code>{" "}
-          (con <code>FIGMA_REACT_DIR=figma-playground/src/components</code> en el <code>.env</code>).
+          Todavía no hay componentes. Desde la raíz de figspec:{" "}
+          <code>figspec react -s &lt;paquete&gt; -t figma-playground/src/components</code>.
         </p>
       ) : (
         delivered.map(({ name, Comp }) => (

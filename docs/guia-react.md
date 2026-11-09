@@ -1,24 +1,24 @@
 # De la salida a React
 
-Qué genera el extractor, cómo se usa, y cómo llevarlo a un proyecto React con `npm run react`.
+Qué genera el extractor, cómo se usa, y cómo llevarlo a un proyecto React con `figspec react`.
 
 ## La salida del extractor
 
-Cada vez que corres `npm start`, `npm run extract` o `npm run react`, el extractor genera una carpeta por componente (en `FIGMA_OUT_DIR`, por ejemplo `figma-work/menu/`; sin esa variable, `figma-<componente>/`):
+Cada comando (`figspec view`, `figspec react`, `figspec build`) genera primero una carpeta de salida. Con `figspec build -o <carpeta>` queda donde digas (sin `-o`, en `figma-<componente>/`); `view` y `react` la dejan en una carpeta temporal, salvo que pases `-o`:
 
 ```
-figma-work/menu/             carpeta de salida
+salida/                      carpeta de salida (figspec build -s figspec-menu.json -o salida)
   component.json             especificación (referencia, para construir a mano o con un LLM)
   tokens.css                 tokens globales (opcional)
   preview.png                vista previa
   figma-geometry.json        caja de Figma de cada capa (para el visualizador)
   inconsistencies.md         posibles errores del diseño (solo si hay alguno)
-  viewer.html                visualizador (con --viewer o npm start)
+  viewer.html                visualizador (con --viewer o figspec view)
   Menu/                      el componente: se copia tal cual a tu proyecto
     Menu.module.css          CSS Module de la raíz
     Badge.module.css         … y de cada subcomponente
     assets/icons/*.svg       íconos e imágenes
-    Menu.tsx, Badge.tsx, icons.tsx, index.ts   (con --react o npm run react)
+    Menu.tsx, Badge.tsx, icons.tsx, index.ts   (con --react o figspec react)
 ```
 
 - **`component.json`**: estructura, props, variantes, subcomponentes y estilos por clase. Es la especificación para construir el componente, a mano o con un LLM. Su formato está en [docs/formatos.md](formatos.md).
@@ -41,20 +41,20 @@ Cada ejecución reemplaza la salida anterior (solo los archivos que generó el e
 - **Fuentes**: el CSS nombra la fuente del diseño tal cual, sin una genérica de respaldo. Tu proyecto tiene que tenerla instalada o cargada (`@font-face`); si falta, el navegador usa la suya y el componente se ve distinto.
 - Si el texto se ve más grueso que en Figma (Chrome en macOS), agrega en tu CSS global `-webkit-font-smoothing: antialiased`: Figma dibuja el texto con un suavizado más fino. Es una decisión de tu proyecto, no del componente.
 
-## Llevarlo a tu proyecto: `npm run react`
+## Llevarlo a tu proyecto: `figspec react`
 
 ```sh
-FIGMA_REACT_DIR=src/components      # en el .env: dónde van los componentes en tu proyecto
-npm run react -- achievements       # o --to <carpeta>; sin nombre, el último exportado
+# desde tu proyecto: el paquete, tus decisiones de nombres y la carpeta de componentes
+figspec react -s ~/Downloads/figspec-achievements.json -d design/achievements.decisions.json -t src/components
 ```
 
 1. Vuelve a generar la salida con el paquete y las decisiones actuales: lo que se entrega siempre está al día.
-2. Copia la carpeta del componente (`.tsx`, `.module.css`, íconos, imágenes y `tokens.css`) a `FIGMA_REACT_DIR/<Componente>/`, con un manifiesto: en la próxima entrega reemplaza o borra solo lo que generó (tus archivos en esa carpeta no se tocan). Si la carpeta existe y no la generó figspec, no escribe nada (salvo `--force`).
+2. Copia la carpeta del componente (`.tsx`, `.module.css`, íconos, imágenes y `tokens.css`) a `<carpeta de -t>/<Componente>/`, con un manifiesto: en la próxima entrega reemplaza o borra solo lo que generó (tus archivos en esa carpeta no se tocan). Si la carpeta existe y no la generó figspec, no escribe nada (salvo `--force`).
 3. Compara la API con la entrega anterior y avisa: **⚠** lo que puede romper el código que ya usa el componente (un componente o una prop que se quitan, opciones de una variante que cambian) y, aparte, lo que se agrega o cambia por dentro (clases). Si el componente se entregó antes con otro nombre, avisa de la carpeta vieja. `--dry-run` muestra los cambios sin escribir en el destino.
 
 Una vez integrado, el componente es una API que otros usan: renombrar después cambia clases, props o el nombre del componente. Por eso conviene pulir los nombres en el [visualizador](guia-visualizador.md#renombrar) antes de la primera entrega, y revisar los avisos en cada una.
 
-Los demás parámetros (`--extract-repeated`, `--name`…) pasan al extractor; ver [Configuración](configuracion.md#reactjs-npm-run-react).
+Los demás parámetros (`--extract-repeated`, `--name`, `--dry-run`…) están en [Comandos y parámetros](configuracion.md#figspec-react).
 
 ## Probarlo antes: `figma-playground/`
 
@@ -62,8 +62,7 @@ Un proyecto Vite + React + TypeScript listo para recibir los componentes, dentro
 
 ```sh
 npm --prefix figma-playground install   # una vez (necesita internet)
-FIGMA_REACT_DIR=figma-playground/src/components   # en el .env
-npm run react -- achievements
+figspec react -s figspec-achievements.json -t figma-playground/src/components
 npm run playground                      # la página en http://127.0.0.1:5173
 npm --prefix figma-playground run check # tipos (strict) + build de Vite de todo lo entregado
 ```
@@ -72,7 +71,7 @@ Sirve de referencia para tu proyecto: `src/global.css` tiene lo que los componen
 
 ## Qué se genera
 
-Con `--react` (o `npm run react`) se generan, en la subcarpeta del componente (junto a sus CSS Modules y assets):
+Con `figspec react` (o `figspec build --react`) se generan, en la subcarpeta del componente (junto a sus CSS Modules y assets):
 
 - **`<Componente>.tsx`** para la raíz y cada subcomponente, con su CSS Module.
 - **`icons.tsx`**: cada SVG como componente React (los monocromos usan `currentColor`, así que toman el `color` del CSS).
@@ -93,7 +92,7 @@ import { Card } from "./components/Card"; // la subcarpeta copiada a tu proyecto
 
 ## Ítems repetidos
 
-Con `--extract-repeated` (o `FIGMA_EXTRACT_REPEATED=true`), cada grupo de 3 o más hermanos con la misma estructura (ítems de un menú, filas de una lista, tarjetas) pasa a ser un subcomponente:
+Con `--extract-repeated`, cada grupo de 3 o más hermanos con la misma estructura (ítems de un menú, filas de una lista, tarjetas) pasa a ser un subcomponente:
 
 ```tsx
 <SideMenuItem className={styles.item} state="active" icon={Icons.Dashboard} label="Dashboard" />

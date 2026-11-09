@@ -1,6 +1,6 @@
 # 0006. Cero dependencias en tiempo de ejecución
 
-- Estado: Aceptada (2026-10-26, desde el primer commit)
+- Estado: Reemplazada por [0021](0021-runa-cmd-para-el-cli.md) (aceptada el 2026-10-26, desde el primer commit)
 - Dónde aplica: `package.json`, todos los `.js` de la raíz, `test/`
 
 ## Contexto

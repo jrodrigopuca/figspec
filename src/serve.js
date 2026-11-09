@@ -1,12 +1,12 @@
-#!/usr/bin/env node
 "use strict";
 /**
- * figspec — servidor local del visualizador (npm start). Genera la salida con el extractor, sirve
- * viewer.html en http://127.0.0.1 y recibe "Guardar nombres": aplica los nombres sin descargar
- * archivos (vuelve a correr el extractor, que los combina en las decisiones del proyecto) y la
- * página se recarga ya regenerada.
+ * figspec — servidor local del visualizador (figspec view). Genera la salida con el extractor,
+ * sirve viewer.html en http://127.0.0.1 y recibe "Guardar nombres": aplica los nombres sin
+ * descargar archivos (vuelve a correr el extractor, que los combina en las decisiones del
+ * proyecto) y la página se recarga ya regenerada.
  *
- * Uso: node serve.js [componente | paquete] [opciones del extractor] [--port N] [--no-open]
+ * Uso interno: main([parámetros del extractor…, "--port", N, "--no-open"]) devuelve el servidor,
+ * o null si la generación falló. También: node src/serve.js -s <paquete> [-d <decisiones>].
  *
  * Solo escucha en 127.0.0.1 y exige una clave que va en la página: otra web abierta en el
  * navegador no puede escribirle. El viewer.html suelto (doble clic) sigue descargando.
@@ -18,14 +18,13 @@ const path = require("path");
 const http = require("http");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
-const { loadDefaultEnv, openFile } = require("./env");
+const { openFile } = require("./paths");
 
 const EXTRACTOR = path.join(__dirname, "extractor.js");
 const MAX_BODY = 5 * 1024 * 1024;
 
 function main(argv) {
-	loadDefaultEnv();
-	let port = Number(process.env.FIGMA_PORT) || 4870;
+	let port = 4870;
 	let open = true;
 	const args = [];
 	for (let i = 0; i < argv.length; i++) {
@@ -52,11 +51,11 @@ function main(argv) {
 	let state = extract();
 	if (state.error) {
 		process.exitCode = 1;
-		return;
+		return null;
 	}
 	const token = crypto.randomBytes(16).toString("hex");
 
-	// Guarda los nombres: con decisiones del proyecto (FIGMA_DECISIONS) el extractor los combina
+	// Guarda los nombres: con decisiones del proyecto (-d) el extractor los combina
 	// ahí; si no, quedan junto al paquete, donde los buscaría de todos modos
 	function save(doc) {
 		const base = path.join(path.dirname(state.bundle), path.basename(state.bundle).replace(/ ?\(\d+\)(?=\.json$)/i, "").replace(/\.json$/i, ""));
@@ -133,6 +132,7 @@ function main(argv) {
 		if (open) openFile(url);
 	});
 	server.listen(port, "127.0.0.1");
+	return server;
 }
 
 if (require.main === module) main(process.argv.slice(2));

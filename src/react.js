@@ -9,9 +9,9 @@
  *   icons.tsx         → cada SVG como componente React (currentColor)
  *   index.ts          → exporta el componente raíz y sus tipos
  *
- * Como comando (npm run react [-- componente]) lleva el componente a tu proyecto: vuelve a
- * generar la salida (paquete + decisiones, siempre al día) y copia la carpeta del componente a
- * FIGMA_REACT_DIR/<Componente>/ (o --to <carpeta>), con un manifiesto para reemplazar solo lo que
+ * Como comando (figspec react -s <paquete> -t <carpeta>) lleva el componente a tu proyecto: vuelve
+ * a generar la salida (paquete + decisiones, siempre al día) y copia la carpeta del componente a
+ * <carpeta>/<Componente>/, con un manifiesto para reemplazar solo lo que
  * generó antes. Avisa qué cambia en la API (componentes, props, clases) respecto de la entrega
  * anterior; --dry-run solo lo muestra.
  */
@@ -456,7 +456,7 @@ function indent(s, n) {
 		.join("\n");
 }
 
-// ---------------------------------------------------------------- npm run react
+// ---------------------------------------------------------------- figspec react
 const MANIFEST = ".figspec-manifest.json";
 
 // API pública de lo generado: por componente, sus props (tipo y opciones) y sus clases
@@ -501,8 +501,7 @@ function apiChanges(before, after) {
 function cli(argv) {
 	const os = require("os");
 	const { spawnSync } = require("child_process");
-	const { loadDefaultEnv, expandHome } = require("./env");
-	loadDefaultEnv();
+	const { expandHome } = require("./paths");
 	let to = null;
 	let dry = false;
 	let force = false;
@@ -513,9 +512,9 @@ function cli(argv) {
 		else if (argv[i] === "--force") force = true;
 		else if (argv[i] !== "--react") pass.push(argv[i]);
 	}
-	const base = expandHome(to || process.env.FIGMA_REACT_DIR);
+	const base = expandHome(to);
 	if (!base) {
-		console.error("✖ Falta el destino: define FIGMA_REACT_DIR en el .env (p. ej. FIGMA_REACT_DIR=src/components) o usa -t <carpeta> (--to).");
+		console.error("✖ Falta el destino: pásalo con -t <carpeta> (p. ej. -t src/components).");
 		return 1;
 	}
 

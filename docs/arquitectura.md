@@ -5,8 +5,20 @@ hasta cada salida, qué no se puede romper y dónde tocar para cada tipo de camb
 archivo (los contratos entre módulos) están en [formatos.md](formatos.md); el porqué de cada
 decisión, en [decisiones/](decisiones/README.md).
 
-Todo lo que dice este documento sale del código (se cita `archivo:función`). Si el código y este
-documento no coinciden, manda el código: corrige el documento en el mismo cambio.
+Todo lo que dice este documento sale del código (se cita `archivo:función`; los archivos sin
+carpeta están en `src/`). Si el código y este documento no coinciden, manda el código: corrige el
+documento en el mismo cambio.
+
+## Estructura del repositorio
+
+```
+bin/figspec.mjs   el comando figspec: comandos y parámetros (el contrato público)
+src/              el motor: extractor, generadores, visualizador, servidor (CommonJS, sin dependencias)
+plugin/           el plugin de Figma (corre dentro de Figma)
+test/             pruebas con node --test
+docs/             guías, formatos y decisiones
+figma-playground/ proyecto React de ejemplo que recibe entregas (aparte, con sus dependencias)
+```
 
 ## La idea en una frase
 
@@ -23,22 +35,27 @@ flowchart LR
   subgraph Figma["Figma (solo lectura)"]
     P["plugin/code.js<br/>+ plugin/ui.html"]
   end
-  P -- "descarga figspec-x.json<br/>(foto + sección decisions)" --> IN[("FIGMA_FROM<br/>figma-inbox/")]
+  P -- "descarga figspec-x.json<br/>(foto + sección decisions)" --> IN[("-s<br/>el paquete")]
+  CLI["bin/figspec.mjs<br/>view · react · build"] -.-> SV
+  CLI -.-> RC
+  CLI -.-> X
   IN --> X["extractor.js"]
-  D[("FIGMA_DECISIONS<br/>x.decisions.json")] <--> X
+  D[("-d<br/>x.decisions.json")] <--> X
   X --> CJ["component.json<br/>figma-geometry.json<br/>inconsistencies.md"]
   X --> CSS["Comp/*.module.css<br/>tokens.css · assets/ · preview.png"]
   X -- "--react" --> R["react.js generateReact<br/>Comp/*.tsx · icons.tsx · index.ts"]
   X -- "--viewer" --> V["viewer.js generateViewer<br/>viewer.html (autocontenido)"]
   S["spec.js"] -.-> R
   S -.-> V
-  SV["serve.js (npm start)<br/>127.0.0.1 + clave"] -- "spawn --viewer --report" --> X
+  SV["serve.js (figspec view)<br/>127.0.0.1 + clave"] -- "spawn --viewer --report" --> X
   V -- "POST /api/decisions" --> SV
-  RC["react.js cli (npm run react)"] -- "spawn --react --report" --> X
-  RC -- "copia + manifiesto" --> PRJ[("FIGMA_REACT_DIR<br/>p. ej. figma-playground/src/components")]
+  RC["react.js cli (figspec react)"] -- "spawn --react --report" --> X
+  RC -- "copia + manifiesto" --> PRJ[("-t<br/>p. ej. src/components")]
 ```
 
-Paso a paso:
+Paso a paso (el paso 0 es el comando: `bin/figspec.mjs` valida los parámetros con runa-cmd y los
+traduce a los parámetros internos del módulo de `src/` que corresponde; sin `-o`, `view` y `react`
+reciben una carpeta temporal como salida):
 
 1. **Figma → paquete.** `plugin/code.js:analyze` lista las capas con nombre vago y los grupos
    repetidos para que la ventana (`plugin/ui.html`) ofrezca nombrarlos. Al exportar,
@@ -48,9 +65,9 @@ Paso a paso:
    (`getImageByHash`), la vista previa PNG y, si se eligió algún nombre, la sección `decisions`
    (`namesFile`). `plugin/ui.html:save` pasa los binarios a base64 y lo descarga como
    `figspec-<componente>.json` (o "Copiar JSON" si la descarga falla).
-2. **Paquete → especificación.** `extractor.js:main` elige el paquete (`env.js:bundleIn`,
-   `newestCopy`), junta las fuentes de nombres (sección `decisions` del paquete, archivo del
-   proyecto, `.names.json` y `.decisions.json` sueltos, `--decisions`) y las resuelve contra el
+2. **Paquete → especificación.** `extractor.js:main` lee el paquete de `-s`, junta las fuentes
+   de nombres (sección `decisions` del paquete, el archivo de `-d`, `.names.json` y
+   `.decisions.json` junto al paquete, `--decisions` interno) y las resuelve contra el
    árbol (`resolveDecisions`). Después construye el componente (`buildRoot` → `assemble` → `walk`),
    los subcomponentes (`buildSubs`), los repetidos (`findRepeated`, `extractRepeated` con
    `--extract-repeated`), `aria` (`ariaFor`) y las inconsistencias.
@@ -65,8 +82,8 @@ Paso a paso:
    todos los datos; `viewer-client.js:renderTree` dibuja el componente en un Shadow DOM con los
    mismos `.module.css`. "Guardar nombres" descarga un `.decisions.json` (archivo suelto) o, si lo
    sirve `serve.js`, hace `POST /api/decisions` y el servidor vuelve a correr el extractor.
-5. **Entrega.** `react.js:cli` (`npm run react`) corre el extractor con `--react`, copia la
-   subcarpeta del componente y `tokens.css` a `FIGMA_REACT_DIR/<Componente>/` con su manifiesto y
+5. **Entrega.** `react.js:cli` (`figspec react`) corre el extractor con `--react`, copia la
+   subcarpeta del componente y `tokens.css` a `<carpeta de -t>/<Componente>/` con su manifiesto y
    avisa los cambios de API (`apiSummary`, `apiChanges`).
 
 ## Mapa de módulos
@@ -75,25 +92,31 @@ Paso a paso:
 |---|---|---|---|
 | `plugin/code.js` | Figma (sandbox del plugin) | Leer la selección y armar el paquete. Copia las reglas de nombres del extractor **solo para mostrar sugerencias** | `plugin/ui.html` |
 | `plugin/ui.html` | Figma (iframe) | Ventana: nombres, estados, opciones, descarga | — |
-| `env.js` | Node | `.env`, `~`, copias del navegador (`x (1).json`), carpetas por componente (`bundleIn`, `outDirFor`, `decisionsIn`), abrir archivos | extractor, viewer, serve, react |
-| `extractor.js` | Node (CLI) | Figma → `component.json`, CSS, tokens, assets, geometría, inconsistencias; combinar y guardar decisiones; manifiesto de salida | serve, react (como proceso hijo) |
+| `bin/figspec.mjs` | Node (ESM) | El comando: define `view`, `react` y `build` y sus parámetros con runa-cmd, y los traduce a parámetros internos. Único archivo con dependencias | quien usa figspec |
+| `paths.js` | Node | `~`, copias del navegador (`x (1).json`), el archivo de decisiones cuando `-d` es una carpeta (`decisionsIn`), abrir archivos | extractor, viewer, serve, react, bin |
+| `extractor.js` | Node (proceso) | Figma → `component.json`, CSS, tokens, assets, geometría, inconsistencias; combinar y guardar decisiones; manifiesto de salida | bin (`build`), serve, react (como proceso hijo) |
 | `spec.js` | Node y navegador | **Interpretación** de `component.json`: condiciones por variante (`matches`, `pickCase`), estructura activa, valores por defecto, listas `.map`, nombres. Sin `fs` | react.js, viewer-client.js |
-| `react.js` | Node | `generateReact`: `component.json` → `.tsx`. `cli`: entrega al proyecto con manifiesto y avisos de API | extractor (`--react`), `npm run react` |
-| `viewer.js` | Node | Arma `viewer.html` autocontenido (datos, CSS, assets en `data:`, scripts en línea) | extractor (`--viewer`), `npm run viewer` |
+| `react.js` | Node | `generateReact`: `component.json` → `.tsx`. `cli`: entrega al proyecto con manifiesto y avisos de API | extractor (`--react`), bin (`react`) |
+| `viewer.js` | Node | Arma `viewer.html` autocontenido (datos, CSS, assets en `data:`, scripts en línea) | extractor (`--viewer`) |
 | `viewer-client.js` | Navegador (y Node en pruebas) | Render, comparación con Figma, inspector, renombrar, guardar. Las funciones sin DOM se exportan para `node --test` | viewer.html |
 | `viewer.css` | Navegador | Estilos del visualizador | viewer.html |
-| `serve.js` | Node (`npm start`) | Servidor local: sirve `viewer.html` con una clave y recibe decisiones | — |
+| `serve.js` | Node | Servidor local: sirve `viewer.html` con una clave y recibe decisiones | bin (`view`) |
 | `figma-playground/` | Vite (aparte) | Proyecto React real que recibe entregas; no es parte del paquete | `npm run playground` |
 
 Dos detalles de forma que importan al cambiar cosas:
 
 - **`extractor.js` no es una librería.** Lee `process.argv` y llama a `main()` al cargarse, y
-  guarda el estado de la corrida en dos objetos de módulo (`opts`, `ctx`). Por eso `serve.js` y
-  `react.js` lo ejecutan como **proceso hijo** (`spawnSync`) y reciben el resultado por un archivo
-  `--report` (ver [formatos.md](formatos.md#reporte---report)). No lo importes con `require`.
+  guarda el estado de la corrida en dos objetos de módulo (`opts`, `ctx`). Por eso
+  `bin/figspec.mjs`, `serve.js` y `react.js` lo ejecutan como **proceso hijo** (`spawnSync`) y
+  reciben el resultado por un archivo `--report` (ver [formatos.md](formatos.md#reporte---report)).
+  No lo importes con `require`.
+- **Dos niveles de parámetros.** Los públicos son los de `bin/figspec.mjs` (lo que ve
+  `figspec --help`). Los de `extractor.js`, `serve.js` y `react.js` son internos: el binario los
+  arma. No coinciden uno a uno: el `--decisions` público (se lee y se actualiza) es el `-d`
+  interno; el `--decisions` interno es un archivo que solo se lee (lo usa `serve.js:save`).
 - **Los generadores leen la salida escrita, no el estado en memoria.** `generateReact` y
   `generateViewer` leen `component.json` y los archivos del disco: así usan las rutas finales de
-  los assets (después de deduplicar) y se pueden correr solos (`node viewer.js <salida>`).
+  los assets (después de deduplicar) y se pueden correr solos (`node src/viewer.js <salida>`).
 
 ## Quién es dueño de qué
 
@@ -115,7 +138,7 @@ necesita romper una, primero se escribe un ADR nuevo que reemplace al anterior.
 | # | Invariante | Cómo se defiende | ADR |
 |---|---|---|---|
 | 1 | **El plugin no escribe nada en Figma**: ni capas, ni nombres, ni `pluginData`, ni selección | `test/plugin.test.js`: el `figma` simulado falla ante cualquier escritura y una expresión regular revisa el código ("solo lectura: …") | [0002](decisiones/0002-plugin-de-solo-lectura.md) |
-| 2 | **Cero dependencias en tiempo de ejecución**: solo módulos de Node (`fs`, `path`, `os`, `http`, `crypto`, `child_process`); pruebas con `node --test` | `package.json` sin `dependencies`. **No hay prueba automática** (ver riesgos) | [0006](decisiones/0006-cero-dependencias.md) |
+| 2 | **Dependencias solo en `bin/`**: el CLI usa `@runa-cmd/core` y `zod`; `src/` y `plugin/` usan solo módulos de Node (`fs`, `path`, `os`, `http`, `crypto`, `child_process`); pruebas con `node --test` | `package.json` con esas dos dependencias y nada más. **No hay prueba automática** de que `src/` no importe otras | [0021](decisiones/0021-runa-cmd-para-el-cli.md) |
 | 3 | **Lo que muestra el visualizador es lo que se genera**: React y visualizador interpretan `component.json` con `spec.js` y usan los mismos `.module.css` | `test/spec.test.js` ("paridad: …"); la paridad HTML con React se comprobó con un arnés fuera del repo | [0007](decisiones/0007-spec-compartido-entre-visualizador-y-react.md) |
 | 4 | **Heurísticas genéricas**: ninguna regla depende de un diseño concreto (nombres, textos, colores de un archivo real) | Revisión. Las pruebas usan diseños sintéticos (`test/naming.test.js`) | [0016](decisiones/0016-heuristicas-genericas.md) |
 | 5 | **Los diseños privados no salen de la máquina**: sin red en plugin, extractor ni visualizador; carpetas de trabajo y paquetes fuera de git | `test/viewer.test.js` ("viewer.html no depende de archivos ni de la red"); `.gitignore` (`figma-*/*`, `figspec-*.json`) | [0009](decisiones/0009-los-disenos-no-salen-de-la-maquina.md) |
@@ -124,6 +147,7 @@ necesita romper una, primero se escribe un ADR nuevo que reemplace al anterior.
 | 8 | **Cada herramienta borra solo lo que generó**, y nunca fuera de su carpeta | `extractor.js:cleanOutput` y `react.js:cli` comprueban `startsWith(root + sep)`; `test/viewer.test.js`, `test/react-cli.test.js` | [0012](decisiones/0012-manifiesto-de-salida.md), [0013](decisiones/0013-entrega-con-npm-run-react.md) |
 | 9 | **Un lector nunca adivina una versión más nueva**: paquete, decisiones y `component.json` se rechazan con un mensaje claro | Paquete: `test/naming.test.js` ("un paquete de una versión más nueva falla…"); `component.json`: `test/viewer.test.js`. El rechazo de decisiones más nuevas (`readDecisions`) **no tiene prueba** | [0019](decisiones/0019-versionado-de-formatos.md) |
 | 10 | **La raíz nunca se renombra sola**: su nombre es la API pública del componente | `test/naming.test.js` ("la raíz nunca se renombra sola") | [0016](decisiones/0016-heuristicas-genericas.md) |
+| 11 | **Todo llega por parámetros**: ningún módulo lee variables de entorno ni archivos de configuración, ni busca paquetes en carpetas | `test/paths.test.js` ("nada se lee del entorno…"); `test/cli.test.js` (falta `-s` → error de uso) | [0020](decisiones/0020-cli-unico-con-parametros-explicitos.md) |
 
 ## Dónde cambiar qué
 
@@ -162,13 +186,15 @@ son API pública de lo entregado (ver [ADR 0013](decisiones/0013-entrega-con-npm
 
 1. Un módulo con `generateX(outDir, part, write)` que lea `component.json` y los archivos ya
    escritos, e interprete la especificación con `spec.js`.
-2. Una opción en `extractor.js` (`opts`, el parseo de `argv`, `envFlag("FIGMA_X")`, `printHelp`) y
-   la llamada en `main()` junto a la de React: el `write` que recibe registra cada archivo en el
-   manifiesto, así la próxima corrida lo reemplaza.
+2. Una opción interna en `extractor.js` (`opts`, el parseo de `argv`, `printHelp`) y la llamada en
+   `main()` junto a la de React: el `write` que recibe registra cada archivo en el manifiesto, así
+   la próxima corrida lo reemplaza. La opción pública va en `bin/figspec.mjs` (en `build`, o como
+   un comando nuevo).
 3. Si escribe en un proyecto ajeno, hazlo como `react.js:cli`: proceso hijo del extractor con
-   `--report`, manifiesto propio en el destino, nunca pisar lo que no generó.
-4. Cero dependencias (invariante 2): si el formato necesita una librería, va en un proyecto
-   aparte como `figma-playground/`.
+   `--report`, manifiesto propio en el destino, nunca pisar lo que no generó; y un comando propio
+   en `bin/figspec.mjs`, como `react`.
+4. Sin dependencias en `src/` (invariante 2): si el formato necesita una librería, va en un
+   proyecto aparte como `figma-playground/`.
 
 **Algo nuevo en el visualizador:** la lógica sin DOM en `viewer-client.js` como función exportada
 (se prueba en `test/viewer.test.js`), la interfaz en `boot`, los estilos en `viewer.css`. Datos
@@ -179,8 +205,11 @@ lo lee. Si el extractor puede ignorarlo sin equivocarse, es compatible; si no, s
 (ver [formatos.md](formatos.md#reglas-de-compatibilidad)). Pruébalo con el `figma` simulado de
 `test/plugin.test.js`.
 
-**Una variable de configuración:** `env.js` si es de rutas o carpetas; la opción en `opts` de
-`extractor.js` (o del CLI que la use); documentarla en `.env.example`.
+**Un parámetro nuevo:** se declara en `bin/figspec.mjs` (esquema de `zod`, descripción y alias en
+`meta.options`) y ahí mismo se traduce al parámetro interno del módulo (`extractorArgs` si es
+común a los tres comandos); la opción interna va en `opts` de `extractor.js` o en el `cli` del
+módulo que la use. Documéntalo en [configuracion.md](configuracion.md). No se agregan variables de
+entorno (invariante 11).
 
 **Un tipo de decisión nuevo** (p. ej. grupos de repetidos): el archivo v2 ya reserva `groups: []`.
 Lo lee `extractor.js:decisionEntries`/`resolveDecisions`, lo escribe `saveProjectDecisions` y lo

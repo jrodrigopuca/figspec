@@ -12,10 +12,10 @@ Todo sale del código; cada sección cita `archivo:función`. La arquitectura ge
 | Archivo | Versión hoy | Escribe | Lee |
 |---|---|---|---|
 | [Paquete del plugin](#paquete-del-plugin-figspec-componentejson) `figspec-<componente>.json` | `figspec: 2` | `plugin/code.js:exportRoot` + `plugin/ui.html:save` | `extractor.js:main` |
-| [Archivo de decisiones](#archivo-de-decisiones) `*.decisions.json` | `version: 2` (lee 1) | `extractor.js:saveProjectDecisions`, `viewer-client.js:decisionsDoc`, `plugin/code.js:namesFile` | `extractor.js:readDecisions`, `env.js:decisionsIn` |
+| [Archivo de decisiones](#archivo-de-decisiones) `*.decisions.json` | `version: 2` (lee 1) | `extractor.js:saveProjectDecisions`, `viewer-client.js:decisionsDoc`, `plugin/code.js:namesFile` | `extractor.js:readDecisions`, `paths.js:decisionsIn` |
 | [`component.json`](#componentjson) | `meta.format: 1` | `extractor.js:main` | `react.js`, `viewer.js`, `viewer-client.js` (vía `spec.js`) |
 | [`figma-geometry.json`](#figma-geometryjson) | `format: 1` | `extractor.js:main` | `viewer.js` → `viewer-client.js` |
-| [Manifiesto de salida](#manifiesto-de-salida-figspec-manifestjson) `.figspec-manifest.json` | sin versión | `extractor.js:writeManifest`, `viewer.js:cli` | `extractor.js:cleanOutput`, `env.js:outDirFor`, `viewer.js:resolveOutDir`, `react.js:cli` |
+| [Manifiesto de salida](#manifiesto-de-salida-figspec-manifestjson) `.figspec-manifest.json` | sin versión | `extractor.js:writeManifest`, `viewer.js:cli` | `extractor.js:cleanOutput`, `react.js:cli` |
 | [Manifiesto de entrega](#manifiesto-de-entrega-npm-run-react) `.figspec-manifest.json` en el destino | sin versión | `react.js:cli` | `react.js:cli` |
 | [Reporte `--report`](#reporte---report) | sin versión (interno) | `extractor.js:main` | `serve.js`, `react.js:cli` |
 | [`viewer.html`](#viewerhtml-datos-embebidos) (datos embebidos) | sigue a `meta.format` | `viewer.js:viewerHtml` | `viewer-client.js:boot` |
@@ -76,7 +76,7 @@ descarga). Lee: `extractor.js:main`, `extractor.js:bundleAssets`, `extractor.js:
   (`VECTOR_TYPES` o `isIconish`). Con la opción de assets apagada, `icons` e `images` quedan vacíos;
   sin vista previa, `preview` es `null`. El extractor avisa lo que falta (`bundleAssets`).
 - **Nombre del archivo**: `figspec-<slug>.json`, con el nombre de la raíz elegido en la ventana si
-  hay uno, si no el del nodo (`plugin/ui.html:save`). `env.js:componentSlug` lo convierte de vuelta
+  hay uno, si no el del nodo (`plugin/ui.html:save`). `paths.js:componentSlug` lo convierte de vuelta
   en el nombre del componente (`figspec-menu-mobile (1).json` → `menu-mobile`).
 
 **Versiones que el extractor acepta** (`extractor.js:main`):
@@ -97,7 +97,7 @@ un set (`BACKLOG.md`, pendiente).
 ## Archivo de decisiones
 
 Los **nombres decididos por personas** (de capas, del componente, de estados de ítems repetidos)
-que no viven en Figma. Un archivo por componente en el proyecto (`FIGMA_DECISIONS`), pensado para
+que no viven en Figma. Un archivo por componente en el proyecto (el que se pasa con `-d`), pensado para
 versionarse con el código. Ver [ADR 0004](decisiones/0004-decisiones-v2.md).
 
 Mismo formato en todos sus lugares:
@@ -105,8 +105,8 @@ Mismo formato en todos sus lugares:
 | Dónde | Nombre | `origin` | Lo escribe |
 |---|---|---|---|
 | Sección `decisions` del paquete | — | `plugin` | `plugin/code.js:namesFile` |
-| Carpeta del proyecto (`FIGMA_DECISIONS`) | `<componente>.decisions.json` | `project` | `extractor.js:saveProjectDecisions` |
-| Junto al paquete o en `FIGMA_INBOX` | `figspec-<componente>.decisions.json` | `viewer` | `viewer-client.js:decisionsDoc` (descarga) o `serve.js:save` sin `FIGMA_DECISIONS` |
+| El archivo de `-d` (o, si es una carpeta, dentro de ella) | el que se pase (`<componente>.decisions.json` en una carpeta) | `project` | `extractor.js:saveProjectDecisions` |
+| Junto al paquete | `<paquete>.decisions.json` | `viewer` | `viewer-client.js:decisionsDoc` (descarga) o `serve.js:save` sin `-d` |
 | Junto al paquete (heredado) | `figspec-<componente>.names.json` | `plugin` | plugin anterior (ya no se genera) |
 
 ### Versión 2 (actual)
@@ -150,7 +150,7 @@ proyecto → `.decisions.json` descargados → `--decisions`. Todo lo del plugin
 decisiones: a igual fecha, gana lo decidido después (prueba "a igual fecha, las decisiones del
 proyecto ganan…" en `test/env.test.js`).
 
-`env.js:decisionsIn` busca el archivo del proyecto por `component.id` (aunque el archivo se llame
+Cuando `-d` es una carpeta, `paths.js:decisionsIn` busca el archivo por `component.id` (aunque se llame
 distinto) y, si no lo encuentra, usa `<componente>.decisions.json`. `saveProjectDecisions` lo
 reescribe solo si cambió algo además de `savedAt`/`origin`, sin el campo `orphan`.
 
@@ -278,13 +278,11 @@ Lista de lo que generó el extractor en la carpeta de salida. Ver
 - `extractor.js:cleanOutput` borra al empezar **solo** esos archivos (nunca fuera de la carpeta) y
   las carpetas que quedan vacías; `writeManifest` lo reescribe al final.
 - `viewer.js:cli` suma `viewer.html` si lo generó aparte.
-- Su presencia marca "esto es una salida": `env.js:outDirFor` usa la carpeta tal cual (en lugar de
-  una subcarpeta por componente) y `viewer.js:resolveOutDir` la elige.
 - `react.js:cli` lo lee para saber qué copiar (lo que empieza con `<Componente>/`).
 
-## Manifiesto de entrega (`npm run react`)
+## Manifiesto de entrega (`figspec react`)
 
-En `FIGMA_REACT_DIR/<Componente>/.figspec-manifest.json`. Escribe y lee: `react.js:cli`. Ver
+En `<carpeta de -t>/<Componente>/.figspec-manifest.json`. Escribe y lee: `react.js:cli`. Ver
 [ADR 0013](decisiones/0013-entrega-con-npm-run-react.md).
 
 ```jsonc
@@ -338,7 +336,7 @@ id="figspec-data">` (escapado con `safeJson`) y los scripts en línea (`spec.js`
 }
 ```
 
-Con `npm start`, `serve.js` inyecta `window.figspecServer = { token }` en `<head>`; la página lo
+Con `figspec view`, `serve.js` inyecta `window.figspecServer = { token }` en `<head>`; la página lo
 usa para `POST /api/decisions` con la cabecera `X-Figspec-Token` y un cuerpo de decisiones v2
 (máximo 5 MB; 400 si no tiene `figspec: "decisions"`, 403 sin la clave).
 

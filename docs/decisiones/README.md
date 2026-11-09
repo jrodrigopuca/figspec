@@ -17,7 +17,7 @@ código; la fecha de cada una es la de la decisión original.
 | [0003](0003-nombres-en-el-mismo-paquete.md) | Los nombres del plugin viajan en el mismo paquete, en su sección `decisions` | Aceptada (2026-10-27) |
 | [0004](0004-decisiones-v2.md) | Decisiones v2: por id y luego ruta, combinadas por fecha, con bajas y huérfanos | Aceptada (2026-10-27) |
 | [0005](0005-servidor-local-con-clave.md) | Servidor local en 127.0.0.1 con clave para guardar nombres sin descargas | Aceptada (2026-10-27) |
-| [0006](0006-cero-dependencias.md) | Cero dependencias en tiempo de ejecución | Aceptada (2026-10-26) |
+| [0006](0006-cero-dependencias.md) | Cero dependencias en tiempo de ejecución | Reemplazada por 0021 |
 | [0007](0007-spec-compartido-entre-visualizador-y-react.md) | `spec.js`: una sola interpretación de `component.json` para visualizador y React | Aceptada (2026-10-26) |
 | [0008](0008-visualizador-autocontenido.md) | El visualizador es un solo HTML autocontenido, sin red | Aceptada (2026-10-26) |
 | [0009](0009-los-disenos-no-salen-de-la-maquina.md) | Los diseños privados no salen de la máquina ni entran en git | Aceptada (2026-10-27) |
@@ -31,6 +31,8 @@ código; la fecha de cada una es la de la decisión original.
 | [0017](0017-etiquetas-y-aria.md) | No se infieren `button`/`a`; `aria-*` desde el nombre del estado | Aceptada (2026-10-26) |
 | [0018](0018-extraer-repetidos-es-opcional.md) | Extraer repetidos a un subcomponente es opcional | Aceptada (2026-10-26) |
 | [0019](0019-versionado-de-formatos.md) | Formatos versionados: se leen los viejos, se rechazan los nuevos | Aceptada (2026-10-26) |
+| [0020](0020-cli-unico-con-parametros-explicitos.md) | Un solo comando `figspec`, con todo por parámetros: sin variables de entorno ni carpetas del repo | Aceptada (2026-11-09) |
+| [0021](0021-runa-cmd-para-el-cli.md) | El CLI se define con runa-cmd: dos dependencias de ejecución y Node 24 | Aceptada (2026-11-09) |
 
 ## Cuándo escribir un ADR
 
@@ -39,7 +41,7 @@ Escribe uno **antes** de implementar si el cambio cumple al menos una:
 - Cambia un **formato** que otros guardan (paquete, decisiones, `component.json`, manifiestos) de
   forma incompatible, o la manera de relacionar nombres con capas.
 - Rompe o relaja una **invariante** de [arquitectura.md](../arquitectura.md#invariantes-no-se-rompen)
-  (solo lectura en Figma, cero dependencias, sin red, misma interpretación en visualizador y React,
+  (solo lectura en Figma, dependencias solo en `bin/`, sin red, misma interpretación en visualizador y React,
   heurísticas genéricas, servidor solo local).
 - Cambia la **API de lo que se entrega** a un proyecto (cómo se nombran clases, props o
   componentes; qué archivos se escriben en el destino).

@@ -14,6 +14,28 @@ pasan a estar activados por defecto, y la limpieza de la salida anterior (manifi
 Los ítems 11 y 12 quedan **retirados**; el código sigue en la historia de git (el último commit
 con la API es `0e71a12`) por si hiciera falta recuperarlo.
 
+## Decisión: un solo comando `figspec`, todo por parámetros, con runa-cmd (2026-11-09)
+
+El código pasó a `src/`, el comando único es `bin/figspec.mjs` (`view`, `react`, `build`) y todo
+llega por parámetros (`-s` paquete, `-d` decisiones, `-t` destino, `-o` salida): se quitaron el
+`.env`, las variables `FIGMA_*`, las carpetas `figma-inbox/`, `figma-work/` y `figma-decisions/`
+y los scripts `npm start`, `npm run extract|viewer|react`. Ver
+[ADR 0020](docs/decisiones/0020-cli-unico-con-parametros-explicitos.md) y
+[ADR 0021](docs/decisiones/0021-runa-cmd-para-el-cli.md) (runa-cmd y zod, Node 24; reemplaza al de
+cero dependencias). **Lo que sigue en este archivo es anterior**: donde nombra esas variables,
+carpetas o scripts, cuenta cómo era entonces.
+
+Pendiente de esta decisión:
+- [ ] Envío directo del plugin a `127.0.0.1` (sin el diálogo de guardar): exige un ADR sobre 0009.
+- [ ] Archivo de configuración por proyecto, solo si repetir `-s`/`-d` molesta (ADR 0020, "Revisar si").
+- [ ] El `--decisions` interno del extractor (solo lectura) se llama igual que el público (lectura
+  y escritura, `-d` interno): renombrar el interno para que no confunda.
+- [ ] Las pruebas de `naming`, `output`, `plugin` y `viewer` todavía vacían variables `FIGMA_*`
+  al correr el extractor: ya no hace nada, se puede quitar.
+- [ ] Prueba que impida importar dependencias fuera de `bin/` (invariante 2).
+- [ ] La ayuda y los errores de uso salen en inglés (runa-cmd) y el resto en español.
+- [ ] Otras tecnologías de salida como comandos nuevos (patrón de `figspec react`).
+
 ## En mira
 
 Resumen de lo pendiente (el detalle está en cada ítem más abajo).

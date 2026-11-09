@@ -16,7 +16,7 @@ function checkData(data) {
 	if (!data || !data.spec || !data.spec.component) return "El archivo no trae la especificación del componente.";
 	const format = data.spec.meta && data.spec.meta.format;
 	if (format !== 1)
-		return `La especificación tiene el formato ${format === undefined ? "anterior a meta.format" : format} y este visualizador entiende el 1. Vuelve a generarlo con el extractor (node viewer.js <carpeta>).`;
+		return `La especificación tiene el formato ${format === undefined ? "anterior a meta.format" : format} y este visualizador entiende el 1. Vuelve a generarlo (figspec view -s <paquete>).`;
 	return null;
 }
 
@@ -1047,7 +1047,7 @@ function boot(doc, data) {
 	const bundleFile = (meta.source && meta.source.bundle) || `figspec-${spec.kebab(design.component.figmaName) || "componente"}.json`;
 	// Sin la marca de copia del navegador ("figspec-x (1).json"): el extractor lo busca por el original
 	const fileName = bundleFile.replace(/ ?\(\d+\)(?=\.json$)/i, "").replace(/\.json$/i, "") + ".decisions.json";
-	// Servido por serve.js (npm start): "Guardar nombres" los aplica sin descargar
+	// Servido por serve.js (figspec view): "Guardar nombres" los aplica sin descargar
 	const server = typeof window !== "undefined" && window.figspecServer && /^https?:$/.test(location.protocol) ? window.figspecServer : null;
 	function currentDoc() {
 		// Ruta y nombre en Figma de cada capa, para reconocerla aunque cambie el id (copias)
@@ -1110,7 +1110,7 @@ function boot(doc, data) {
 			rows.push({ from: t ? `.${t.current}` : id, to: v === null ? "(el que elija el extractor)" : `.${codeClass(v)}`, layer: find });
 		}
 		for (const { g, st, to } of pendingStates()) rows.push({ from: `${g.sub} · estado ${st.name}`, to: codeClass(to), layer: () => null });
-		const cmd = `node extractor.js ${bundleFile} --viewer`;
+		const cmd = `figspec view -s ${bundleFile} -d ${fileName}`;
 		const copyBtn = h("button", { type: "button", class: "fv-link", text: "Copiar comando", onclick: () => copy(cmd, copyBtn) });
 		const saveBtn = h("button", { type: "button", class: "fv-primary", text: "Guardar nombres",
 			title: server ? "Los aplica y regenera la salida" : `Descarga ${fileName}`, onclick: () => saveNames(saveBtn) });
@@ -1123,7 +1123,7 @@ function boot(doc, data) {
 			alertBox,
 			server
 				? h("p", { class: "fv-hint", text: "Se aplican al momento: el extractor los guarda en las decisiones del proyecto y la vista se regenera." })
-				: h("p", { class: "fv-hint" }, `Se descarga ${fileName}: guárdalo en la carpeta de entrada (junto al paquete) y vuelve a generar (npm start, o `, h("code", { text: cmd }), "). Con npm start se guardan sin descargar. ", copyBtn),
+				: h("p", { class: "fv-hint" }, `Se descarga ${fileName}: pásalo con -d al volver a generar (`, h("code", { text: cmd }), "). Con figspec view se guardan sin descargar. ", copyBtn),
 		);
 	}
 
@@ -1195,7 +1195,7 @@ function boot(doc, data) {
 	function stateSection() {
 		if (!states.length)
 			return (design.component.repeated || []).some((r) => r.styleGroups)
-				? [h("p", { class: "fv-hint fv-names-note", text: "Hay ítems repetidos con estilos distintos (posibles estados): se nombran al extraerlos como subcomponente (FIGMA_EXTRACT_REPEATED=true o --extract-repeated)." })]
+				? [h("p", { class: "fv-hint fv-names-note", text: "Hay ítems repetidos con estilos distintos (posibles estados): se nombran al extraerlos como subcomponente (con --extract-repeated)." })]
 				: [];
 		return states.flatMap((g) => [
 			h("h3", { class: "fv-names-section", text: `Estados de ${g.sub}` }),

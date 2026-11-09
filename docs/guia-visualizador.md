@@ -8,12 +8,10 @@ Es un solo archivo con todo adentro (especificación, CSS, íconos, imágenes y 
 
 | Cómo | Para qué |
 |---|---|
-| `npm start [-- componente]` | Lo habitual: genera la salida y sirve el visualizador en `http://127.0.0.1`. **Guardar nombres** aplica los cambios al momento |
-| `npm run viewer [-- componente]` | Vuelve a generar `viewer.html` de una salida ya generada y lo abre (archivo suelto) |
-| `node extractor.js figspec-<nombre>.json --viewer` | Al generar la salida a mano (`--open` además lo abre) |
-| `node viewer.js figma-work/<componente>/` | Sobre una carpeta de salida ya generada |
+| `figspec view -s <paquete> [-d <decisiones>]` | Lo habitual: genera la salida y sirve el visualizador en `http://127.0.0.1`. **Guardar nombres** aplica los cambios al momento |
+| `figspec build -s <paquete> -o <carpeta> --viewer` | Deja `<carpeta>/viewer.html` como archivo suelto, para pasárselo a otra persona (`--open` además lo abre) |
 
-Los parámetros de cada uno están en [Configuración](configuracion.md).
+Los parámetros de cada uno están en [Comandos y parámetros](configuracion.md).
 
 Dibuja el componente con los mismos `.module.css` de la salida (cada clase con el nombre de su componente como prefijo, para que no choquen) y la misma interpretación de `component.json` que el generador React (`spec.js`): lo que muestra es lo que se generó. No ejecuta React.
 
@@ -67,14 +65,14 @@ También con **Código** prendido, el inspector tiene un campo **Nombre en códi
 
 ### Guardar los nombres
 
-- Con **`npm start`** (visualizador servido), **Guardar nombres** los aplica al momento: quedan en las decisiones del proyecto (`FIGMA_DECISIONS`) o, sin esa variable, junto al paquete, y la vista se recarga regenerada. El servidor solo escucha en tu máquina y exige una clave que va en la página.
-- Con el **`viewer.html` suelto** (doble clic, el que le pasas a UX), **Guardar nombres** descarga `figspec-<nombre>.decisions.json` (mismo nombre que el paquete): déjalo en la carpeta de entrada (junto al paquete, o en `FIGMA_INBOX`) y vuelve a generar; el extractor lo incorpora solo. Si está en otro lugar, `--decisions <archivo>`.
+- Con **`figspec view`** (visualizador servido), **Guardar nombres** los aplica al momento: quedan en el archivo que pasaste con `-d` o, sin él, junto al paquete (`<paquete>.decisions.json`), y la vista se recarga regenerada. El servidor solo escucha en tu máquina y exige una clave que va en la página.
+- Con el **`viewer.html` suelto** (doble clic, el que le pasas a UX), **Guardar nombres** descarga `<paquete>.decisions.json` (mismo nombre que el paquete). Tienes dos formas de usarlo: pasarlo con `-d` en la próxima corrida (`figspec view -s <paquete> -d <descargado>`), o dejarlo junto al paquete, donde figspec lo incorpora solo.
 
 Lo aplicado queda en `meta.decisions`: el visualizador nuevo lo muestra ("Este nombre ya viene de un archivo de decisiones") y lo incluye al descargar otra vez, junto con los cambios nuevos (también los nombres elegidos en el plugin, que así pasan al archivo). **Quitar** descarta un cambio o, si ya estaba aplicado, registra que se quitó (con su fecha, para que un archivo más viejo no lo vuelva a poner) y el extractor vuelve a elegir el nombre.
 
 Los nombres viven en esos archivos, no en Figma (el plugin es de solo lectura). Cómo se relaciona cada nombre con su capa, cómo se combinan varios archivos y dónde se guardan está en [Archivos de decisiones](configuracion.md#archivos-de-decisiones).
 
-Una vez entregado el componente a tu proyecto, renombrar cambia clases, props o el nombre del componente: conviene pulir los nombres aquí antes de la primera entrega (ver [npm run react](guia-react.md#llevarlo-a-tu-proyecto-npm-run-react)).
+Una vez entregado el componente a tu proyecto, renombrar cambia clases, props o el nombre del componente: conviene pulir los nombres aquí antes de la primera entrega (ver [figspec react](guia-react.md#llevarlo-a-tu-proyecto-figspec-react)).
 
 ## Avisos y diferencias esperables
 

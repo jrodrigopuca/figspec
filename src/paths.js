@@ -1,40 +1,14 @@
 "use strict";
 /**
- * figspec — configuración compartida por extractor.js y viewer.js: el .env, las rutas con ~ y
- * las copias que crea el navegador al descargar dos veces el mismo archivo.
+ * figspec — rutas y archivos, compartido por el extractor, el servidor y el visualizador: las
+ * rutas con ~, las copias que crea el navegador al descargar dos veces el mismo archivo y el
+ * archivo de decisiones de un componente.
  */
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
-
-// Lee un .env (en la carpeta actual o junto a los scripts). No pisa variables ya definidas: el
-// entorno tiene prioridad sobre el archivo.
-function loadEnv(files) {
-	for (const file of [...new Set(files)]) {
-		let text;
-		try {
-			text = fs.readFileSync(file, "utf8");
-		} catch {
-			continue;
-		}
-		for (const line of text.split(/\r?\n/)) {
-			const m = line.match(
-				/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/,
-			);
-			if (!m || process.env[m[1]] !== undefined) continue;
-			let v = m[2];
-			if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
-			else v = v.replace(/\s+#.*$/, "");
-			process.env[m[1]] = v;
-		}
-	}
-}
-
-function loadDefaultEnv() {
-	loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, "..", ".env")]);
-}
 
 // ~/Descargas/x.json → /Users/<usuario>/Descargas/x.json
 function expandHome(p) {
@@ -89,11 +63,6 @@ function withoutCopyMark(file) {
 	return file.replace(/ ?\(\d+\)(\.[^./\\]+)$/, "$1");
 }
 
-// ---------------------------------------------------------------- carpetas por componente
-// El .env puede indicar carpetas (varios componentes) en lugar de archivos (uno solo):
-//   FIGMA_FROM       paquetes exportados: figspec-<componente>.json
-//   FIGMA_DECISIONS  decisiones del proyecto: <componente>.decisions.json
-//   FIGMA_OUT_DIR    salidas: <carpeta>/<componente>/
 function isDir(p) {
 	try {
 		return fs.statSync(p).isDirectory();
@@ -107,40 +76,7 @@ function componentSlug(file) {
 	return path.basename(withoutCopyMark(file)).replace(/\.json$/i, "").replace(/^figspec-/, "");
 }
 
-// Paquetes de una carpeta (sin los archivos de nombres o decisiones), del más reciente al más viejo
-function bundlesIn(dir) {
-	let names;
-	try {
-		names = fs.readdirSync(dir);
-	} catch {
-		return [];
-	}
-	return names
-		.filter((n) => /^figspec-.*\.json$/i.test(n) && !/\.(names|decisions)( ?\(\d+\))?\.json$/i.test(n))
-		.map((n) => {
-			const full = path.join(dir, n);
-			return { full, t: fs.statSync(full).mtimeMs };
-		})
-		.sort((a, b) => b.t - a.t)
-		.map((x) => x.full);
-}
-
-// El paquete de un componente en una carpeta ("menu-mobile", "figspec-menu-mobile" o el archivo);
-// sin nombre, el último exportado. null si no hay.
-function bundleIn(dir, name) {
-	if (!name) return bundlesIn(dir)[0] || null;
-	const slug = componentSlug(name.endsWith(".json") ? name : `${name}.json`);
-	const file = newestCopy(path.join(dir, `figspec-${slug}.json`));
-	return fs.existsSync(file) ? file : null;
-}
-
-// Carpeta de salida: la indicada si ya es una salida (tiene manifiesto: un solo componente, como
-// antes); si no, una subcarpeta por componente
-function outDirFor(base, slug) {
-	return fs.existsSync(path.join(base, ".figspec-manifest.json")) ? base : path.join(base, slug);
-}
-
-// Archivo de decisiones de un componente en la carpeta del proyecto: el que tenga su id (aunque se
+// Archivo de decisiones de un componente cuando -d es una carpeta: el que tenga su id (aunque se
 // llame distinto) o, si no, <componente>.decisions.json (p. ej. una copia, que se reconoce por
 // ruta). Si no existe, es donde se creará.
 function decisionsIn(dir, slug, nodeId) {
@@ -162,4 +98,4 @@ function decisionsIn(dir, slug, nodeId) {
 	return path.join(dir, `${slug}.decisions.json`);
 }
 
-module.exports = { loadEnv, loadDefaultEnv, expandHome, newestCopy, withoutCopyMark, openFile, isDir, componentSlug, bundlesIn, bundleIn, outDirFor, decisionsIn };
+module.exports = { expandHome, newestCopy, withoutCopyMark, openFile, isDir, componentSlug, decisionsIn };

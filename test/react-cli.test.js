@@ -1,5 +1,5 @@
 "use strict";
-// npm run react: lleva el componente al proyecto (FIGMA_REACT_DIR o --to) con la salida al día,
+// figspec react (react.js:cli): lleva el componente al proyecto (-t) con la salida al día,
 // reemplaza solo lo que generó antes y avisa qué cambia en la API.
 // Uso: node --test   (sin dependencias)
 
@@ -12,7 +12,6 @@ const { spawnSync } = require("node:child_process");
 const { apiSummary, apiChanges } = require("../src/react");
 
 const ROOT = path.join(__dirname, "..");
-const CLEAN = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_INBOX: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_REACT_DIR: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
 
 let seq = 0;
 const T = (s) => ({ id: `${++seq}:1`, name: s, type: "TEXT", characters: s, style: { fontSize: 12 }, absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 } });
@@ -21,24 +20,25 @@ function bundle(name = "Card") {
 	const doc = { id: `${++seq}:1`, name, type: "FRAME", layoutMode: "VERTICAL", absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 100 }, children: [frame] };
 	return { frame, data: { figspec: 2, name, nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {}, nodes: { [doc.id]: { document: doc } } } };
 }
-const run = (args, vars) => spawnSync(process.execPath, [path.join(ROOT, "src", "react.js"), ...args], { env: { ...CLEAN, ...vars }, encoding: "utf8" });
+// vars: los parámetros de cada corrida (paquete, salida intermedia, decisiones y destino)
+const run = (args, vars) => spawnSync(process.execPath, [path.join(ROOT, "src", "react.js"), ...vars, ...args], { encoding: "utf8" });
 function setup() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-react-"));
 	const b = bundle();
 	fs.writeFileSync(path.join(dir, "figspec-card.json"), JSON.stringify(b.data));
-	const vars = { FIGMA_FROM: dir, FIGMA_OUT_DIR: path.join(dir, "work"), FIGMA_DECISIONS: path.join(dir, "decisions"), FIGMA_REACT_DIR: path.join(dir, "src", "components") };
-	return { dir, b, vars, dest: path.join(dir, "src", "components", "Card") };
+	const base = ["-s", path.join(dir, "figspec-card.json"), "-o", path.join(dir, "work"), "-d", path.join(dir, "decisions", "card.decisions.json")];
+	return { dir, b, base, vars: [...base, "-t", path.join(dir, "src", "components")], dest: path.join(dir, "src", "components", "Card") };
 }
 
 test("react: entrega la carpeta del componente con su manifiesto; sin destino, avisa", () => {
-	const { vars, dest } = setup();
+	const { vars, base, dest } = setup();
 	const r = run([], vars);
 	assert.equal(r.status, 0, r.stderr);
 	assert.match(r.stderr, /Primera entrega de Card/);
 	for (const f of ["Card.tsx", "Card.module.css", "index.ts", ".figspec-manifest.json"]) assert.ok(fs.existsSync(path.join(dest, f)), f);
 	const m = JSON.parse(fs.readFileSync(path.join(dest, ".figspec-manifest.json"), "utf8"));
 	assert.deepEqual(Object.keys(m.api), ["Card"]);
-	assert.match(run([], { ...vars, FIGMA_REACT_DIR: "" }).stderr, /Falta el destino/);
+	assert.match(run([], base).stderr, /Falta el destino/);
 });
 
 test("react: con decisiones nuevas regenera, avisa los cambios y borra solo lo suyo que ya no va", () => {

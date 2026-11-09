@@ -284,7 +284,7 @@
 				`${icons} ícono(s), ${images} imagen(es)${bundle.preview ? ", vista previa" : ""}, ${named} nombre(s) y ${states} estado(s) elegidos.\n` +
 				"Figma no registró ningún cambio.\n" +
 				// Los estados solo se usan al extraer los repetidos
-				`node extractor.js ${file}${states ? " --extract-repeated" : ""}`,
+				`figspec view -s ${file}${states ? " --extract-repeated" : ""}`,
 		);
 		$("copy").style.display = "inline-block";
 		done();
