@@ -29,9 +29,9 @@ Pendiente de esta decisión:
 - [ ] Archivo de configuración por proyecto, solo si repetir `-s`/`-d` molesta (ADR 0020, "Revisar si").
 - [ ] El `--decisions` interno del extractor (solo lectura) se llama igual que el público (lectura
   y escritura, `-d` interno): renombrar el interno para que no confunda.
-- [ ] Las pruebas de `naming`, `output`, `plugin` y `viewer` todavía vacían variables `FIGMA_*`
-  al correr el extractor: ya no hace nada, se puede quitar.
-- [ ] Prueba que impida importar dependencias fuera de `bin/` (invariante 2).
+- [x] Las pruebas de `naming`, `output`, `plugin` y `viewer` ya no vacían variables `FIGMA_*` al
+  correr el extractor (no hacía nada desde que nada se lee del entorno).
+- [x] Prueba que impide importar dependencias fuera de `bin/` (invariante 2): `test/deps.test.js`.
 - [ ] La ayuda y los errores de uso salen en inglés (runa-cmd) y el resto en español.
 - [ ] Otras tecnologías de salida como comandos nuevos (patrón de `figspec react`).
 
@@ -383,7 +383,8 @@ siguiente lo encontraron senior-dev y architect al escribirlos):
 - [ ] Investigar: en un set con variantes, un único ítem extraído con fondo distinto sale como estado
   `default2` en vez de `active` (caso sintético: State=Default/Hover, tres ítems, uno con fondo
   negro). Si se confirma, rompe la paridad con el plugin.
-- [ ] Prueba: ningún `.js` del paquete requiere algo fuera de los módulos de Node o de `./` (ADR 0006).
+- [x] Prueba: ningún `.js` de `src/` ni de `plugin/` requiere algo fuera de los módulos de Node o
+  de `./` (`test/deps.test.js`; desde el ADR 0021 las dependencias van solo en `bin/`).
 - [ ] Pruebas de `serve.js`: `Host` distinto de 127.0.0.1/localhost → 403; cuerpo de más de 5 MB
   rechazado.
 - [ ] Prueba: un archivo de decisiones con `version: 3` falla con un mensaje claro.

@@ -35,6 +35,7 @@ Para entender cómo encajan las piezas, lee [docs/arquitectura.md](docs/arquitec
 | `src/serve.js` | Servidor local de `figspec view`: sirve el visualizador y recibe "Guardar nombres" |
 | `test/cli.test.js` | El comando `figspec`: parámetros, errores de uso y `view` |
 | `test/paths.test.js` | Rutas con `~`, copias del navegador, decisiones junto al paquete y con `-d`, y que nada se lee del entorno |
+| `test/deps.test.js` | Las dependencias se importan solo en `bin/`: `src/` y `plugin/` usan módulos de Node y archivos propios |
 | `test/naming.test.js` | Nombres de clases, íconos y componentes con diseños variados |
 | `test/output.test.js` | Detalles de la salida, avisos y notas de aproximaciones |
 | `test/plugin.test.js` | El plugin con un `figma` simulado: solo lectura y paridad de nombres con el extractor |

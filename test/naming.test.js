@@ -29,7 +29,6 @@ function extract(doc, args = [], extra = {}) {
 	const out = path.join(dir, "out");
 	execFileSync("node", [EXTRACTOR, input, "--out-dir", out, ...args], {
 		stdio: "pipe",
-		env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "" },
 	});
 	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 	const classes = [];
@@ -426,7 +425,7 @@ test("decisiones v2: en cada capa gana el nombre más reciente, venga de donde v
 	const dec = decisionsFile(dv2(doc, { layers: [{ id: a.id, name: "viejo", at: at(1) }, { id: b.id, name: "nuevo", at: at(9) }] }));
 	const bundle = { nodes: { [doc.id]: { document: doc } }, ...plugin(doc) };
 	fs.writeFileSync(path.join(dir, "in.json"), JSON.stringify(bundle));
-	execFileSync("node", [EXTRACTOR, path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), "--decisions", dec], { stdio: "pipe", env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "" } });
+	execFileSync("node", [EXTRACTOR, path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), "--decisions", dec], { stdio: "pipe" });
 	const spec = JSON.parse(fs.readFileSync(path.join(dir, "out", "component.json"), "utf8"));
 	assert.deepEqual(spec.component.structure.children.map((e) => e.className), ["delPlugin", "nuevo"]);
 });

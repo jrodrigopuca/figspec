@@ -114,7 +114,6 @@ function extract(bundle, args = [], names = null) {
 	if (names) fs.writeFileSync(path.join(dir, "in.names.json"), JSON.stringify(names));
 	execFileSync("node", [path.join(ROOT, "src", "extractor.js"), path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), ...args], {
 		stdio: "pipe",
-		env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_EXTRACT_REPEATED: "" },
 	});
 	const spec = JSON.parse(fs.readFileSync(path.join(dir, "out", "component.json"), "utf8"));
 	const byName = [];

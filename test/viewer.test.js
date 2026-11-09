@@ -12,7 +12,6 @@ const { execFileSync, spawnSync } = require("node:child_process");
 const client = require("../src/viewer-client");
 
 const ROOT = path.join(__dirname, "..");
-const ENV = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
 
 let seq = 0;
 const box = (w, h, x = 0, y = 0) => ({ x, y, width: w, height: h });
@@ -58,7 +57,7 @@ function extract(args = [], input = bundle()) {
 	const file = path.join(dir, "in.json");
 	fs.writeFileSync(file, JSON.stringify(input));
 	const out = path.join(dir, "out");
-	const r = spawnSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out, ...args], { env: ENV, encoding: "utf8" });
+	const r = spawnSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out, ...args], { encoding: "utf8" });
 	return { out, status: r.status, stderr: r.stderr };
 }
 
@@ -119,7 +118,7 @@ test("node viewer.js <salida>: lo suma al manifiesto y la próxima extracción l
 	assert.ok(manifest(out).includes("viewer.html"));
 	// Otra extracción sin --viewer limpia lo que generó antes, viewer.html incluido
 	const file = path.join(path.dirname(out), "in.json");
-	execFileSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out], { env: ENV, stdio: "pipe" });
+	execFileSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out], { stdio: "pipe" });
 	assert.equal(fs.existsSync(path.join(out, "viewer.html")), false);
 });
 
