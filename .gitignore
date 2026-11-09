@@ -2,8 +2,7 @@
 .env
 .env.*
 
-# Salidas por defecto de figspec build (figma-<componente>/) y carpetas de trabajo de versiones
-# anteriores (figma-inbox, figma-work, figma-decisions): su contenido es privado (diseños y nombres)
+# Salidas por defecto de figspec build (figma-<componente>/): su contenido es privado (diseños y nombres)
 figma-*/*
 
 # figma-playground es un proyecto (se versiona), salvo los componentes entregados y su build
