@@ -26,7 +26,6 @@ cero dependencias). **Lo que sigue en este archivo es anterior**: donde nombra e
 carpetas o scripts, cuenta cómo era entonces.
 
 Pendiente de esta decisión:
-- [ ] Envío directo del plugin a `127.0.0.1` (sin el diálogo de guardar): exige un ADR sobre 0009.
 - [ ] Archivo de configuración por proyecto, solo si repetir `-s`/`-d` molesta (ADR 0020, "Revisar si").
 - [ ] El `--decisions` interno del extractor (solo lectura) se llama igual que el público (lectura
   y escritura, `-d` interno): renombrar el interno para que no confunda.
