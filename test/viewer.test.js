@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
-const client = require("../viewer-client");
+const client = require("../src/viewer-client");
 
 const ROOT = path.join(__dirname, "..");
 const ENV = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
@@ -58,7 +58,7 @@ function extract(args = [], input = bundle()) {
 	const file = path.join(dir, "in.json");
 	fs.writeFileSync(file, JSON.stringify(input));
 	const out = path.join(dir, "out");
-	const r = spawnSync("node", [path.join(ROOT, "extractor.js"), file, "--out-dir", out, ...args], { env: ENV, encoding: "utf8" });
+	const r = spawnSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out, ...args], { env: ENV, encoding: "utf8" });
 	return { out, status: r.status, stderr: r.stderr };
 }
 
@@ -114,12 +114,12 @@ test("sin --viewer no hay viewer.html; --viewer con --no-css falla", () => {
 test("node viewer.js <salida>: lo suma al manifiesto y la próxima extracción lo reemplaza", () => {
 	const input = bundle();
 	const { out } = extract([], input);
-	execFileSync("node", [path.join(ROOT, "viewer.js"), out], { stdio: "pipe" });
+	execFileSync("node", [path.join(ROOT, "src", "viewer.js"), out], { stdio: "pipe" });
 	assert.ok(fs.existsSync(path.join(out, "viewer.html")));
 	assert.ok(manifest(out).includes("viewer.html"));
 	// Otra extracción sin --viewer limpia lo que generó antes, viewer.html incluido
 	const file = path.join(path.dirname(out), "in.json");
-	execFileSync("node", [path.join(ROOT, "extractor.js"), file, "--out-dir", out], { env: ENV, stdio: "pipe" });
+	execFileSync("node", [path.join(ROOT, "src", "extractor.js"), file, "--out-dir", out], { env: ENV, stdio: "pipe" });
 	assert.equal(fs.existsSync(path.join(out, "viewer.html")), false);
 });
 
@@ -129,7 +129,7 @@ test("node viewer.js rechaza un component.json de otro formato", () => {
 	const spec = JSON.parse(fs.readFileSync(file, "utf8"));
 	spec.meta.format = 99;
 	fs.writeFileSync(file, JSON.stringify(spec));
-	const r = spawnSync("node", [path.join(ROOT, "viewer.js"), out], { encoding: "utf8" });
+	const r = spawnSync("node", [path.join(ROOT, "src", "viewer.js"), out], { encoding: "utf8" });
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, /formato 99.*Vuelve a generar/);
 	assert.equal(fs.existsSync(path.join(out, "viewer.html")), false);
@@ -140,7 +140,7 @@ test("archivos que faltan en la salida se listan en missing", () => {
 	const spec = JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 	const img = fs.readdirSync(path.join(out, "Card/assets/images"))[0];
 	fs.rmSync(path.join(out, "Card/assets/images", img));
-	const { viewerHtml } = require("../viewer");
+	const { viewerHtml } = require("../src/viewer");
 	const data = embedded(viewerHtml(out));
 	assert.deepEqual(data.missing, [`Card/assets/images/${img}`]);
 	assert.equal(spec.component.name, "Card");
@@ -622,7 +622,7 @@ test("estados: el extractor aplica un estado renombrado desde el visualizador", 
 
 test("el visualizador no tapa la variable doc (el documento) dentro de boot", () => {
 	// Un "const doc = …" rompió la descarga de Guardar nombres en el viewer.html suelto
-	const src = fs.readFileSync(path.join(ROOT, "viewer-client.js"), "utf8");
+	const src = fs.readFileSync(path.join(ROOT, "src", "viewer-client.js"), "utf8");
 	const boot = src.slice(src.indexOf("function boot(doc, data) {"));
 	assert.doesNotMatch(boot, /\b(const|let|var)\s+doc\b/);
 });

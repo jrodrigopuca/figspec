@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const EXTRACTOR = path.join(__dirname, "..", "extractor.js");
+const EXTRACTOR = path.join(__dirname, "..", "src", "extractor.js");
 
 // ---------------------------------------------------------------- árboles de prueba
 let seq = 0;

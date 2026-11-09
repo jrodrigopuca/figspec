@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const env = require("../env");
+const env = require("../src/env");
 
 const ROOT = path.join(__dirname, "..");
 // Sin variables del .env del proyecto: cada prueba define las suyas
@@ -27,7 +27,7 @@ const write = (file, data, ageSeconds = 0) => {
 	const t = Date.now() / 1000 - ageSeconds;
 	fs.utimesSync(file, t, t);
 };
-const run = (script, args, vars) => spawnSync("node", [path.join(ROOT, script), ...args], { env: { ...CLEAN, ...vars }, encoding: "utf8" });
+const run = (script, args, vars) => spawnSync("node", [path.join(ROOT, "src", script), ...args], { env: { ...CLEAN, ...vars }, encoding: "utf8" });
 const spec = (out) => JSON.parse(fs.readFileSync(path.join(out, "component.json"), "utf8"));
 
 // ---------------------------------------------------------------- env.js

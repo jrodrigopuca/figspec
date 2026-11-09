@@ -100,9 +100,11 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "--no-react") opts.react = false;
 	else if (a === "--viewer") opts.viewer = true;
 	else if (a === "--no-viewer") opts.viewer = false;
-	else if (a === "--out-dir") (opts.outDir = argv[++i]), (opts.outDirFromEnv = false);
+	else if (a === "--out-dir" || a === "-o") (opts.outDir = value(a, argv[++i])), (opts.outDirFromEnv = false);
 	else if (a === "--name") opts.name = argv[++i];
-	else if (a === "--from" || a === "--json") (opts.from = argv[++i]), (opts.fromEnv = false);
+	else if (a === "--from" || a === "--json" || a === "-s" || a === "--spec") (opts.from = value(a, argv[++i])), (opts.fromEnv = false);
+	// -d: el archivo de decisiones del componente; se lee y se actualiza (como FIGMA_DECISIONS)
+	else if (a === "-d") opts.projectDecisions = expandHome(value(a, argv[++i]));
 	else if (a === "--decisions") opts.decisions = argv[++i];
 	else if (a === "--no-decisions") (opts.decisions = null), (opts.projectDecisions = null), (opts.findDecisions = false);
 	else if (a === "--open") opts.open = true;
@@ -111,12 +113,18 @@ for (let i = 0; i < argv.length; i++) {
 	else if (a === "-h" || a === "--help") {
 		printHelp();
 		process.exit(0);
-	} else if (!a.startsWith("--")) {
+	} else if (!a.startsWith("-")) {
 		// Un archivo, o el nombre de un componente si FIGMA_FROM es una carpeta de paquetes
 		if (!fs.existsSync(a) && opts.from && isDir(opts.from)) opts.component = a;
 		else (opts.from = a), (opts.fromEnv = false);
 	}
 	else fail(`Opción desconocida: ${a}`);
+}
+
+// El valor de una opción: sin él (o si lo que sigue es otra opción), se avisa en lugar de adivinar
+function value(flag, v) {
+	if (v === undefined || v.startsWith("-")) fail(`Falta el valor de ${flag} (p. ej. ${flag} ${flag === "-o" || flag === "--out-dir" ? "carpeta" : "archivo.json"}).`);
+	return v;
 }
 
 function envFlag(name, def) {
@@ -3146,9 +3154,11 @@ nombres elegidos en su ventana. También acepta una respuesta guardada de /v1/fi
 sin nombre, el último exportado.
 
 Opciones (anulan al .env):
-  --from <archivo> (o --json)     paquete de entrada (FIGMA_FROM)
+  -s, --spec <archivo>            paquete de entrada (también --from o --json; FIGMA_FROM)
+  -d <archivo>                    decisiones del componente: se leen y se actualizan con los nombres
+                                  nuevos (FIGMA_DECISIONS)
   --name <Nombre>                 nombre del componente en código (FIGMA_NAME)
-  --out-dir <carpeta>             salida, tal cual (FIGMA_OUT_DIR es la carpeta base: una subcarpeta por
+  -o, --out-dir <carpeta>         salida, tal cual (FIGMA_OUT_DIR es la carpeta base: una subcarpeta por
                                   componente); sin ninguno, figma-<componente>/
   --react / --no-react            componentes React en TypeScript (FIGMA_REACT)
   --viewer / --no-viewer          viewer.html: el componente junto a la vista previa de Figma (FIGMA_VIEWER)

@@ -24,7 +24,7 @@ function bundle() {
 // Arranca serve.js y espera la URL; devuelve { url, stop, log }
 function start(args, vars) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [path.join(ROOT, "serve.js"), ...args, "--port", "0", "--no-open"], { env: { ...CLEAN, ...vars } });
+		const child = spawn(process.execPath, [path.join(ROOT, "src", "serve.js"), ...args, "--port", "0", "--no-open"], { env: { ...CLEAN, ...vars } });
 		let log = "";
 		const timer = setTimeout(() => reject(new Error(`serve.js no arrancó:\n${log}`)), 15000);
 		child.stderr.on("data", (d) => {

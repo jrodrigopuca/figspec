@@ -33,7 +33,7 @@ function loadEnv(files) {
 }
 
 function loadDefaultEnv() {
-	loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, ".env")]);
+	loadEnv([path.join(process.cwd(), ".env"), path.join(__dirname, "..", ".env")]);
 }
 
 // ~/Descargas/x.json → /Users/<usuario>/Descargas/x.json

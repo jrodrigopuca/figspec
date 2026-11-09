@@ -112,7 +112,7 @@ function extract(bundle, args = [], names = null) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-plugin-"));
 	fs.writeFileSync(path.join(dir, "in.json"), JSON.stringify(bundle));
 	if (names) fs.writeFileSync(path.join(dir, "in.names.json"), JSON.stringify(names));
-	execFileSync("node", [path.join(ROOT, "extractor.js"), path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), ...args], {
+	execFileSync("node", [path.join(ROOT, "src", "extractor.js"), path.join(dir, "in.json"), "--out-dir", path.join(dir, "out"), ...args], {
 		stdio: "pipe",
 		env: { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_VIEWER: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_EXTRACT_REPEATED: "" },
 	});

@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { apiSummary, apiChanges } = require("../react");
+const { apiSummary, apiChanges } = require("../src/react");
 
 const ROOT = path.join(__dirname, "..");
 const CLEAN = { ...process.env, FIGMA_FROM: "", FIGMA_DECISIONS: "", FIGMA_INBOX: "", FIGMA_NAME: "", FIGMA_OUT_DIR: "", FIGMA_REACT: "", FIGMA_REACT_DIR: "", FIGMA_VIEWER: "", FIGMA_EXTRACT_REPEATED: "", FIGMA_ASSETS: "", FIGMA_CSS: "" };
@@ -21,7 +21,7 @@ function bundle(name = "Card") {
 	const doc = { id: `${++seq}:1`, name, type: "FRAME", layoutMode: "VERTICAL", absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 100 }, children: [frame] };
 	return { frame, data: { figspec: 2, name, nodeId: doc.id, exportedAt: "2026-01-01T00:00:00Z", icons: {}, images: {}, variables: {}, nodes: { [doc.id]: { document: doc } } } };
 }
-const run = (args, vars) => spawnSync(process.execPath, [path.join(ROOT, "react.js"), ...args], { env: { ...CLEAN, ...vars }, encoding: "utf8" });
+const run = (args, vars) => spawnSync(process.execPath, [path.join(ROOT, "src", "react.js"), ...args], { env: { ...CLEAN, ...vars }, encoding: "utf8" });
 function setup() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figspec-react-"));
 	const b = bundle();

@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const EXTRACTOR = path.join(__dirname, "..", "extractor.js");
+const EXTRACTOR = path.join(__dirname, "..", "src", "extractor.js");
 
 let seq = 0;
 const box = (w = 50, h = 20, x = 0, y = 0) => ({ x, y, width: w, height: h });

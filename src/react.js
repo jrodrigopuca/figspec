@@ -508,14 +508,14 @@ function cli(argv) {
 	let force = false;
 	const pass = [];
 	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] === "--to") to = argv[++i];
+		if (argv[i] === "--to" || argv[i] === "-t") to = argv[++i];
 		else if (argv[i] === "--dry-run") dry = true;
 		else if (argv[i] === "--force") force = true;
 		else if (argv[i] !== "--react") pass.push(argv[i]);
 	}
 	const base = expandHome(to || process.env.FIGMA_REACT_DIR);
 	if (!base) {
-		console.error("✖ Falta el destino: define FIGMA_REACT_DIR en el .env (p. ej. FIGMA_REACT_DIR=src/components) o usa --to <carpeta>.");
+		console.error("✖ Falta el destino: define FIGMA_REACT_DIR en el .env (p. ej. FIGMA_REACT_DIR=src/components) o usa -t <carpeta> (--to).");
 		return 1;
 	}
 
@@ -595,4 +595,4 @@ function cli(argv) {
 
 if (require.main === module) process.exitCode = cli(process.argv.slice(2));
 
-module.exports = { generateReact, apiSummary, apiChanges };
+module.exports = { generateReact, apiSummary, apiChanges, cli };

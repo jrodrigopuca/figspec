@@ -9,8 +9,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { generateReact } = require("../react");
-const spec = require("../spec");
+const { generateReact } = require("../src/react");
+const spec = require("../src/spec");
 
 // Casos que se superponen a propósito: con state=B y size=L se cumplen varios
 const when = [{ state: "B" }, { state: "B", size: "L" }, { size: "L" }];
